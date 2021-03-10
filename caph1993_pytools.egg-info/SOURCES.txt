@@ -1,0 +1,7 @@
+setup.py
+caph1993_pytools.egg-info/PKG-INFO
+caph1993_pytools.egg-info/SOURCES.txt
+caph1993_pytools.egg-info/dependency_links.txt
+caph1993_pytools.egg-info/top_level.txt
+custom_json/__init__.py
+custom_json/module_1.py
