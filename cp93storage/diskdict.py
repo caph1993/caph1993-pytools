@@ -6,10 +6,8 @@ import sqlite3
 from types import FunctionType
 from typing import Any, Callable, Dict, Generic, List, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
 
-DictEncoder = Callable[[object], dict]
-ListEncoder = Callable[[object], list]
-DictEncoders = Mapping[object, DictEncoder]
-ListEncoders = Mapping[object, ListEncoder]
+DictEncoder = Tuple[Type, Callable[[Any], Dict]]
+ListEncoder = Tuple[Type, Callable[[Any], List]]
 
 JSONLike = Union[str, int, float, bool, None,
                  object]  # (recursive type hotfix, May 2021)
@@ -17,29 +15,27 @@ JSONLike = Union[str, int, float, bool, None,
 
 class CustomJSON:
 
-  default_list_encoders: ListEncoders = {
-      tuple: list,
-      deque: list,
-      set: list,
-      frozenset: list,
-  }
-  default_dict_encoders: DictEncoders = {
-      Counter: dict,
-      OrderedDict: dict,
-  }
+  default_list_encoders: List[ListEncoder] = [
+      (tuple, list),
+      (deque, list),
+      (set, list),
+      (frozenset, list),
+  ]
+  default_dict_encoders: List[DictEncoder] = [
+      (Counter, dict),
+      (OrderedDict, dict),
+  ]
 
   json_types: Sequence[Type] = [dict, list, int, str, float, bool, type(None)]
 
-  def __init__(self, list_encoders: ListEncoders = None,
-               dict_encoders: DictEncoders = None):
+  def __init__(self, list_encoders: List[ListEncoder] = None,
+               dict_encoders: List[DictEncoder] = None):
     'encoders is a dict [class]->converter, where class has a __name__ and'
     'converter converts class into a list or a dict'
-    self.list_encoders = {}
-    self.list_encoders.update(self.__class__.default_list_encoders)
-    self.list_encoders.update(list_encoders or {})
-    self.dict_encoders = {}
-    self.dict_encoders.update(self.__class__.default_dict_encoders)
-    self.dict_encoders.update(dict_encoders or {})
+    self.list_encoders = dict(
+        [*self.default_list_encoders, *(list_encoders or [])])
+    self.dict_encoders = dict(
+        [*self.default_dict_encoders, *(dict_encoders or [])])
 
   def stringify(self, obj: object):
     return self._stringify(obj)[1]
@@ -138,7 +134,10 @@ class DiskDict:
     self.JSON = JSON or CustomJSON()
 
   def _execommit(self, *query):
-    self.connection.execute(*query)
+    try:
+      self.connection.execute(*query)
+    except Exception as e:
+      raise Exception(*query) from e
     self.connection.commit()
 
   def _iterrows(self, *query):
@@ -192,8 +191,8 @@ class DiskDict:
       indexed = self.indexed
     else:
       indexed = self._table_columns(table)[1:]
-    qmark = ','.join('?' for _ in indexed)
-    query = f'INSERT INTO {table} VALUES (?,{qmark})'
+    qmark = ','.join('?' for _ in range(len(indexed) + 1))
+    query = f'INSERT INTO {table} VALUES ({qmark})'
     for key, obj in items:
       if hasattr(obj, 'get'):
         values = (obj.get(key) for key in indexed)
@@ -283,6 +282,3 @@ class DiskDict:
     self._execommit(f'ALTER TABLE tmp_indexed RENAME TO indexed')
     self._execommit(f'DROP TABLE IF EXISTS tmp__indexed')
     self.__dict__.pop('__indexed', None)
-
-
-JSON = CustomJSON()

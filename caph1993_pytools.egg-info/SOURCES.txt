@@ -3,5 +3,11 @@ caph1993_pytools.egg-info/PKG-INFO
 caph1993_pytools.egg-info/SOURCES.txt
 caph1993_pytools.egg-info/dependency_links.txt
 caph1993_pytools.egg-info/top_level.txt
+cp93functools/__init__.py
+cp93functools/classes.py
+cp93functools/functools39.py
+cp93storage/__init__.py
+cp93storage/diskdict.py
+cp93storage/quickSearch.py
 custom_json/__init__.py
 custom_json/module_1.py

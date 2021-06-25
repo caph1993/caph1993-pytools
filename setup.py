@@ -8,15 +8,15 @@ twine upload dist/*
 
 setup(
     name='caph1993-pytools',
-    version='0.1.1',
+    version='0.1.4',
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',
     author_email='caph1993@gmail.com',
     license='MIT',
     packages=[
-        'custom_json',
-        'strings',
+        'cp93storage',
+        'cp93functools',
     ],
     install_requires=[],
     classifiers=[
