@@ -121,7 +121,7 @@ class DiskDict:
   #ToDo: Strings are forcibly unidecoded and lowercased to facilitate indexing
   '''
 
-  def __init__(self, file=':memory:', JSON=None):
+  def __init__(self, file=':memory:', JSON=None, indices=None):
     self.connection = sqlite3.connect(file)
 
     self.connection.execute(f'''
@@ -132,6 +132,7 @@ class DiskDict:
       CREATE TABLE IF NOT EXISTS indexed(
         key TEXT NOT NULL)''')
     self.JSON = JSON or CustomJSON()
+    self.add_indices(indices or [])
 
   def _execommit(self, *query):
     try:
@@ -161,6 +162,12 @@ class DiskDict:
     if not found:
       raise KeyError(key)
     return found.pop()
+
+  def get(self, key, default=None):
+    try:
+      return self[key]
+    except KeyError:
+      return default
 
   def items(self):
     q = (f'SELECT key, obj FROM objects',)
@@ -272,7 +279,15 @@ class DiskDict:
   def __len__(self):
     return next(self._itercol(f'SELECT COUNT(key) FROM objects'))
 
+  def add_indices(self, indices):
+    for column, sql_type in indices:
+      self.add_index(column, sql_type)
+
   def add_index(self, column, sql_type):
+    if column not in self.indexed:
+      self._add_index(column, sql_type)
+
+  def _add_index(self, column, sql_type):
     self._execommit(f'DROP TABLE IF EXISTS tmp_indexed')
     self._execommit(
         f'CREATE TABLE tmp_indexed AS SELECT * FROM indexed WHERE 1=0')

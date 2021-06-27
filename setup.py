@@ -1,22 +1,24 @@
 from setuptools import setup
 '''
-To upload:
-python3 setup.py check
-python3 setup.py sdist
-twine upload dist/*
+sh sumbit.sh
+    rm dist/*
+    python3 setup.py check
+    python3 setup.py sdist
+    twine upload dist/*
+    pip3 install --upgrade caph1993-pytools
+    pip3 install --upgrade caph1993-pytools
 '''
 
 setup(
     name='caph1993-pytools',
-    version='0.1.4',
+    version='0.1.17',
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',
     author_email='caph1993@gmail.com',
     license='MIT',
     packages=[
-        'cp93storage',
-        'cp93functools',
+        'cp93pytools',
     ],
     install_requires=[],
     classifiers=[
