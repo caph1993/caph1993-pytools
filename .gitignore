@@ -1,5 +1,8 @@
+# Ignore hidden files/folders except .gitignore files
 .*
-!.gitignore
+!/.gitignore
+# Ignore files/folders ending in ".ignore"
+*.ignore
 
-/dist
-caph1993_pytools.egg-info/*
+dist/
+*.egg-info

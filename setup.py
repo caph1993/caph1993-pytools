@@ -11,7 +11,7 @@ sh sumbit.sh
 
 setup(
     name='caph1993-pytools',
-    version='0.1.17',
+    version='0.1.18',
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',
