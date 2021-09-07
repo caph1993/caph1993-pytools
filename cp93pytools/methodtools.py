@@ -1,6 +1,7 @@
 import functools
 import weakref
-from typing import Any, Callable, Protocol, Type, TypeVar, Union, cast
+from typing import Any, Callable, Optional, Type, TypeVar, Union, cast
+from typing_extensions import Protocol
 '''
 Typing this library correctly is impossible right now.
 
@@ -42,16 +43,22 @@ class _Property(Protocol[SELF, OUT]):
 
 
 class cached_property(property, _Property[SELF, OUT]):
-    '''decorator for converting a method into a cached property'''
-
-    # https://stackoverflow.com/a/4037979/3671939
+    '''
+    decorator for converting a method into a cached property
+    See https://stackoverflow.com/a/4037979/3671939
+    This uses a modification:
+    1. inherit from property, which disables setattr(instance, name, value)
+        as it raises AttributeError: Can't set attribute
+    2. use instance.__dict__[name] = value to fix
+    '''
 
     def __init__(self, method: Callable[[SELF], OUT]):
         self._method = method
 
     def __get__(self, instance: SELF, _) -> OUT:
+        name = self._method.__name__
         value = self._method(instance)
-        setattr(instance, self._method.__name__, value)
+        instance.__dict__[name] = value
         return value
 
 
