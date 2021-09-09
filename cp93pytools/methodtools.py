@@ -13,36 +13,23 @@ I decided to leave it partially implemented (for future inspiration) using
 Union[Callable[[SELF], OUT], Callable[..., OUT]] 
 '''
 
-SELF = TypeVar("SELF", contravariant=True)
-OUT = TypeVar("OUT", covariant=True)
+_T = TypeVar('_T')
 
 
-class _NormalMethod_fixed_signature(Protocol[SELF, OUT]):
+class _NormalMethod(Protocol[_T]):
     __name__: str
-
-    def __call__(_self, self: SELF, *args, **kwargs) -> OUT:
-        ...
+    __call__: Callable[..., _T]
 
 
-class _NormalMethod_any_signature(Protocol[SELF, OUT]):
-    __name__: str
-    __call__: Callable
+_ClassMethod = _NormalMethod
+_StaticMethod = _NormalMethod
 
 
-_NormalMethod = Union[_NormalMethod_fixed_signature,
-                      _NormalMethod_any_signature,]
-
-_ClassMethod = _NormalMethod_any_signature
-_StaticMethod = _NormalMethod_any_signature
+class _Property(Protocol[_T]):
+    __get__: Callable[..., _T]
 
 
-class _Property(Protocol[SELF, OUT]):
-
-    def __get__(self, instance: SELF, _) -> OUT:
-        ...
-
-
-class cached_property(property, _Property[SELF, OUT]):
+class cached_property(property, _Property[_T]):
     '''
     decorator for converting a method into a cached property
     See https://stackoverflow.com/a/4037979/3671939
@@ -52,10 +39,10 @@ class cached_property(property, _Property[SELF, OUT]):
     2. use instance.__dict__[name] = value to fix
     '''
 
-    def __init__(self, method: Callable[[SELF], OUT]):
+    def __init__(self, method: Callable[..., _T]):
         self._method = method
 
-    def __get__(self, instance: SELF, _) -> OUT:
+    def __get__(self, instance, _) -> _T:
         name = self._method.__name__
         value = self._method(instance)
         instance.__dict__[name] = value
@@ -65,7 +52,7 @@ class cached_property(property, _Property[SELF, OUT]):
 def set_method(cls):
     '''decorator for adding or replacing a method of a given class'''
 
-    def decorator(method: _NormalMethod[SELF, Any]):
+    def decorator(method: _NormalMethod):
         assert hasattr(method, '__call__'), f'Not callable method: {method}'
         name: str = method.__name__  # type:ignore
         setattr(cls, name, method)
@@ -77,10 +64,10 @@ def cached_method(maxsize=128, typed=False):
     '''decorator for converting a method into an lru cached method'''
 
     # https://stackoverflow.com/a/33672499/3671939
-    def decorator(func: _NormalMethod[SELF, OUT]) -> _NormalMethod[SELF, OUT]:
+    def decorator(func: _NormalMethod[_T]) -> _NormalMethod[_T]:
 
         @functools.wraps(func)
-        def wrapped_func(self: SELF, *args, **kwargs):
+        def wrapped_func(self, *args, **kwargs):
             # We're storing the wrapped method inside the instance. If we had
             # a strong reference to self the instance would never die.
             weak_self = weakref.ref(self)
@@ -103,11 +90,8 @@ def cached_method(maxsize=128, typed=False):
 def set_cached_method(cls, maxsize=128, typed=False):
     '''decorator for adding or replacing a cached_method of a given class'''
 
-    def decorator(method: _NormalMethod[SELF, OUT]):
-        f = cast(
-            _NormalMethod[SELF, OUT],
-            cached_method(maxsize, typed)(method),
-        )
+    def decorator(method: _NormalMethod):
+        f = cached_method(maxsize, typed)(method)
         return set_method(cls)(f)
 
     return decorator
@@ -116,8 +100,8 @@ def set_cached_method(cls, maxsize=128, typed=False):
 def set_classmethod(cls):
     '''decorator for adding or replacing a classmethod of a given class'''
 
-    def decorator(method: _ClassMethod[SELF, OUT]):
-        f = cast(_NormalMethod[SELF, OUT], classmethod(method))
+    def decorator(method: _ClassMethod):
+        f = cast(_NormalMethod[_T], classmethod(method))
         return set_method(cls)(f)
 
     return decorator
@@ -126,28 +110,28 @@ def set_classmethod(cls):
 def set_staticmethod(cls):
     '''decorator for adding or replacing a staticmethod of a given class'''
 
-    def decorator(method: _StaticMethod[SELF, OUT][SELF, Any]):
-        f = cast(_NormalMethod[SELF, OUT], staticmethod(method))
+    def decorator(method: _StaticMethod):
+        f = cast(_NormalMethod[_T], staticmethod(method))
         return set_method(cls)(f)
 
     return decorator
 
 
-def set_property(cls: Type[SELF]):
+def set_property(cls):
     '''decorator for adding or replacing a property of a given class'''
 
-    def decorator(method: Callable[[SELF], OUT]):
-        f = cast(_NormalMethod[SELF, OUT], property(method))
-        return set_method(cls)(f)
+    def decorator(method: _NormalMethod):
+        f = property(method)
+        return set_method(cls)(f)  # type:ignore
 
     return decorator
 
 
-def set_cached_property(cls: Type[SELF]):
+def set_cached_property(cls):
     '''decorator for adding or replacing a cached_property of a given class'''
 
-    def decorator(method: Callable[[SELF], OUT]):
-        f = cast(_NormalMethod[SELF, OUT], cached_property(method))
+    def decorator(method):
+        f = cast(_NormalMethod[_T], cached_property(method))
         return set_method(cls)(f)
 
     return decorator
