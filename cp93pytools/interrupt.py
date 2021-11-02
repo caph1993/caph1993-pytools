@@ -1,7 +1,11 @@
 import ctypes
+import threading
 
 
-def terminate_thread(thread, exception=SystemExit):
+def terminate_thread(
+    thread: threading.Thread,
+    exception=SystemExit,
+):
     """
     https://stackoverflow.com/a/15274929/3671939
     Terminates a python thread from another thread.
@@ -12,13 +16,16 @@ def terminate_thread(thread, exception=SystemExit):
 
     exc = ctypes.py_object(exception)
     res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-        ctypes.c_long(thread.ident), exc)
+        ctypes.c_long(thread.ident or 0), exc)
     if res == 0:
         raise ValueError("nonexistent thread id")
     elif res > 1:
         # """if it returns a number greater than one, you're in trouble,
         # and you should call it again with exc=NULL to revert the effect"""
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(thread.ident, None)
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            thread.ident,
+            None,
+        )
         raise SystemError("PyThreadState_SetAsyncExc failed")
 
 

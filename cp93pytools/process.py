@@ -1,3 +1,4 @@
+from typing import Any, Optional, TypedDict, Union
 from ._dict import Dict
 from subprocess import (Popen, PIPE, DEVNULL, TimeoutExpired,
                         CalledProcessError)
@@ -8,6 +9,19 @@ import sys, time, io, asyncio, threading
 from .interrupt import terminate_thread
 
 ON_POSIX = 'posix' in sys.builtin_module_names
+
+
+def _silent_interrupt(func):
+
+    def wrapper(self, *args, **kwargs):
+        try:
+            func(self, *args, **kwargs)
+        except KeyboardInterrupt:
+            pass
+        return
+
+    wrapper.__name__ = func.__name__
+    return wrapper
 
 
 class MyProcess():
@@ -64,15 +78,30 @@ class MyProcess():
         kwargs.pop('self')
         self.kwargs = Dict(kwargs)
 
-    def run(self, input=None, timeout=None, check=False, capture_stdout=False,
-            live_stdout=None, timeout_stdout=None, max_stdout=None,
-            capture_stderr=False, live_stderr=None, timeout_stderr=None,
-            max_stderr=None, encoding='utf-8', micro_delay=1e-3):
+    def run(
+        self,
+        input: str = None,
+        timeout: float = None,
+        check: bool = False,
+        capture_stdout=True,
+        live_stdout=None,
+        timeout_stdout=None,
+        max_stdout=None,
+        capture_stderr=False,
+        live_stderr=None,
+        timeout_stderr=None,
+        max_stderr=None,
+        encoding='utf-8',
+        micro_delay=1e-3,
+    ):
         kwargs = locals()
         kwargs.pop('self')
         self.kwargs.update(kwargs)
         self._start()
-        interrupt = Thread(target=self._kill, args=['KeyboardInterrupt'])
+        interrupt = Thread(
+            target=self._kill,
+            args=['KeyboardInterrupt'],
+        )
         try:
             #self._sync.wait() was here before but
             #the loop is needed for quick handling of
@@ -97,7 +126,7 @@ class MyProcess():
         return self
 
     async def async_run(self, input=None, timeout=None, check=False,
-                        capture_stdout=False, live_stdout=None,
+                        capture_stdout=True, live_stdout=None,
                         timeout_stdout=None, max_stdout=None,
                         capture_stderr=False, live_stderr=None,
                         timeout_stderr=None, max_stderr=None, encoding='utf-8',
@@ -115,11 +144,22 @@ class MyProcess():
             )
         return self
 
-    def run_detached(self, input=None, timeout=None, check=False,
-                     capture_stdout=False, live_stdout=None,
-                     timeout_stdout=None, max_stdout=None, capture_stderr=False,
-                     live_stderr=None, timeout_stderr=None, max_stderr=None,
-                     encoding='utf-8', micro_delay=1e-3):
+    def run_detached(
+        self,
+        input: str = None,
+        timeout: float = None,
+        check: bool = False,
+        capture_stdout=True,
+        live_stdout=None,
+        timeout_stdout=None,
+        max_stdout=None,
+        capture_stderr=False,
+        live_stderr=None,
+        timeout_stderr=None,
+        max_stderr=None,
+        encoding='utf-8',
+        micro_delay=1e-3,
+    ):
         kwargs = locals()
         kwargs.pop('self')
         self.kwargs.update(kwargs)
@@ -149,8 +189,11 @@ class MyProcess():
 
         self._threads['waiter'] = Thread(target=self._waiter)
         if self._timeout:
-            self._threads['timer'] = Timer(self._timeout, self._kill,
-                                           args=['TimeoutExpired'])
+            self._threads['timer'] = Timer(
+                self._timeout,
+                self._kill,
+                args=['TimeoutExpired'],
+            )
 
         config = {
             'out': {
@@ -179,7 +222,7 @@ class MyProcess():
                 stdin=PIPE,
                 stdout=config['out']['pipe'],
                 stderr=config['err']['pipe'],
-                bufsize=1,
+                #bufsize=1,
                 close_fds=ON_POSIX,
             )
         except FileNotFoundError as e:
@@ -194,7 +237,8 @@ class MyProcess():
             return
         assert self._process.stdin
         if self.kwargs.input != None:
-            self._process.stdin.write(self.kwargs.encode(self.kwargs.encoding))
+            _input = self.kwargs.input.encode(self.kwargs.encoding)
+            self._process.stdin.write(_input)
         self._process.stdin.close()
 
         config['out']['source'] = self._process.stdout
@@ -232,19 +276,6 @@ class MyProcess():
         for key, t in self._threads.items():
             t.start()
         return
-
-    @staticmethod
-    def _silent_interrupt(func):
-
-        def wrapper(self, *args, **kwargs):
-            try:
-                func(self, *args, **kwargs)
-            except KeyboardInterrupt:
-                pass
-            return
-
-        wrapper.__name__ = func.__name__
-        return wrapper
 
     def _waiter(self):
         try:
@@ -393,28 +424,40 @@ class TemporaryStdout(io.RawIOBase):
         sys.stdout = self.prev
 
 
-if __name__ == '__main__':
-    exit(0)
+def test():
     # Testing mode
     cmd1 = ' && '.join(f'sleep 0.25 && echo "{i} "' for i in range(4))
     cmd2 = "python3 -c 'import time; [print(i, flush=True) or time.sleep(0.25) for i in range(4)] ; print(input().upper());'"
     cmd3 = "python3 -c 'import time; [print(i, flush=True) or time.sleep(0.25) for i in range(4)] ; print(input().upper()); exit(1)'"
     cmd4 = "python3 -c 'for i in range(10**6): print(str(0)*i, flush=True)'"
 
+    class TmpWriter:
+
+        def write(self, s):
+            print(s, end='', flush=True) or time.sleep(0.6)
+
     tests = [
         {
             'title': 'No live printing, no error and capture stdout',
             'cmd': cmd1,
-            'kwargs': dict(shell=True, timeout=None)
-        },
-        {
-            'title': 'Print 1..4 (live), no error and capture stdout',
-            'cmd': cmd1,
             'kwargs': dict(
                 shell=True,
-                timeout=1.1,
-                stdout_handler=sys.stdout,
+                timeout=None,
+                capture_stdout=True,
             )
+        },
+        {
+            'title':
+                'Print 1..4 (live), no error and capture stdout',
+            'cmd':
+                cmd1,
+            'kwargs':
+                dict(
+                    shell=True,
+                    timeout=1.1,
+                    live_stdout=sys.stdout,
+                    capture_stdout=True,
+                )
         },
         {
             'title':
@@ -425,7 +468,7 @@ if __name__ == '__main__':
                 dict(
                     shell=True,
                     timeout=1.1,
-                    stdout_handler=sys.stdout,
+                    live_stdout=sys.stdout,
                     capture_stdout=False,
                 )
         },
@@ -438,7 +481,7 @@ if __name__ == '__main__':
                 dict(
                     shell=True,
                     timeout=0.6,
-                    stdout_handler=sys.stdout,
+                    live_stdout=sys.stdout,
                     capture_stdout=True,
                 )
         },
@@ -451,31 +494,30 @@ if __name__ == '__main__':
                 dict(
                     shell=True,
                     timeout=0.6,
-                    stdout_handler=lambda s: print(s, end='', flush=True) or
-                    time.sleep(0.6),
-                    #wait_stdout_handler=False,
+                    live_stdout=TmpWriter(),
+                    #wait_live_stdout=False,
                     capture_stdout=False,
                 )
         },
         {
-            'title':
-                'Live printing, Excess of Output',
-            'cmd':
-                cmd4,
-            'kwargs':
-                dict(
-                    shell=True,
-                    stdout_handler=sys.stdout,
-                    max_stdout='1k',
-                )
+            'title': 'Live printing, Excess of Output',
+            'cmd': cmd4,
+            'kwargs': dict(
+                shell=True,
+                live_stdout=sys.stdout,
+                max_stdout='1k',
+            )
         },
     ]
     for i, test in enumerate(tests):
         print('-' * 10, f'TEST {i+1}', '-' * 10)
         print(test['title'])
-        p = MyProcess(test['cmd'], **test['kwargs'])
+        p = MyProcess(
+            test['cmd'],
+            shell=test['kwargs'].pop('shell', False),
+        )
+        p.run(**test['kwargs'])
         print('Elapsed:', p.elapsed)
         print('Error:', p.error)
         print('Stdout:', p.stdout)
-
-    #MyProcess(['cat', 'z'])
+    exit(0)  # Required for some reason
