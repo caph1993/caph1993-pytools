@@ -1,2 +1,3 @@
-from cp93pytools.audio import sequence
+from cp93pytools.audio import Sequence
 from cp93pytools.methodtools import cached_property
+from cp93pytools.process import MyProcess

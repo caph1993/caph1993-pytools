@@ -5,7 +5,7 @@ from tempfile import NamedTemporaryFile
 from threading import Thread, Timer
 from queue import Queue, Empty
 import sys, time, io, asyncio, threading
-from ._interrupt import terminate_thread
+from .interrupt import terminate_thread
 
 ON_POSIX = 'posix' in sys.builtin_module_names
 
