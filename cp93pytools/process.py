@@ -398,6 +398,24 @@ class MyProcess():
         return self._done == False
 
 
+class Tee(io.BufferedWriter):
+    """
+    Simple BufferedWriter that broadcasts
+    data to multiple BufferedWriters
+    """
+
+    def __init__(self, *outputs):
+        self.outputs = outputs
+
+    def write(self, s):
+        for out in self.outputs:
+            out.write(s)
+
+    def flush(self):
+        for out in self.outputs:
+            out.flush()
+
+
 class CustomOStream(io.BufferedWriter):
 
     def __init__(self, write_function, flush_function=None):
