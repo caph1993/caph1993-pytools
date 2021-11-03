@@ -33,7 +33,7 @@ class SQLiteDB:
         self,
         query: str,
         params: Iterable[Any] = None,
-    ):
+    ) -> sqlite3.Cursor:
         try:
             with self.new_connection() as con:
                 return con.execute(query, params or [])
@@ -104,6 +104,13 @@ class SQLiteDB:
         with self.new_connection() as con:
             return con.execute("SELECT * FROM ?", table_name)
 
+    def table_count(self, table_name: str):
+        query = f'SELECT COUNT(*) FROM {table_name}'
+        return self.execute(query)[0][0]
+
+    def table_all_rows(self, table_name: str):
+        return [*self.table_iter(table_name)]
+
 
 class SQLiteTable:
 
@@ -122,7 +129,7 @@ class SQLiteTable:
         return self.db.table_iter(self.table_name)
 
     def all_rows(self):
-        return [*self]
+        return self.db.table_all_rows(self.table_name)
 
     def indexed_by(self, index_columns: List[str]):
         return IndexedSQLiteTable(
@@ -131,10 +138,8 @@ class SQLiteTable:
             index_columns,
         )
 
-    def __len__(self):
-        table = self.table_name
-        query = f'SELECT COUNT(*) FROM {table}'
-        return self.db.execute(query)[0][0]
+    def __len__(self) -> int:
+        return self.db.table_count(self.table_name)
 
 
 class IndexedSQLiteTable(SQLiteTable):
