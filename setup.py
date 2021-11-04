@@ -5,7 +5,7 @@ For submitting to PyPi: python3 sumbit.py
 
 setup(
     name='caph1993-pytools',
-    version='0.2.8',
+    version='0.2.9',
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',
