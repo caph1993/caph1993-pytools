@@ -73,7 +73,7 @@ class SQLiteDB:
     def table_columns(self, table_name: str):
         return self.execute_column(
             self._query_table_columns,
-            table_name,
+            [table_name],
         )
 
     def tables(self):
@@ -102,7 +102,7 @@ class SQLiteDB:
 
     def table_iter(self, table_name: str):
         with self.new_connection() as con:
-            return con.execute("SELECT * FROM ?", table_name)
+            return con.execute("SELECT * FROM ?", [table_name])
 
     def table_count(self, table_name: str):
         query = f'SELECT COUNT(*) FROM {table_name}'
