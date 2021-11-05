@@ -181,7 +181,7 @@ class IndexedSQLiteTable(SQLiteTable):
         query = f'SELECT {what} FROM {table} WHERE {where}'
         return self.db.execute(query, idx)
 
-    def set_row(self, *idx: Any, **kwargs):
+    def update_row(self, *idx: Any, **kwargs):
         assert idx, 'Nowhere to set'
         assert kwargs, 'Nothing to set'
         table = self.table_name
@@ -190,7 +190,11 @@ class IndexedSQLiteTable(SQLiteTable):
         query = f'UPDATE {table} SET {what} WHERE {where}'
         params = [*kwargs.values(), *idx]
         cur = self.db._execute(query, params)
-        if cur.rowcount == 0:
+        did_update = (cur.rowcount > 0)
+        return did_update
+
+    def set_row(self, *idx: Any, **kwargs):
+        if not self.update_row(idx, **kwargs):
             idx_dict = dict(zip(self.index_columns, idx))
             self.insert_row(**idx_dict, **kwargs)
         return
