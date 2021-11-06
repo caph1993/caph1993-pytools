@@ -73,7 +73,7 @@ class MyProcess():
         self.returncode: int, exit code of the process
     '''
 
-    def __init__(self, args, shell=False):
+    def __init__(self, args, shell=False, env=None):
         kwargs = locals()
         kwargs.pop('self')
         self.kwargs = Dict(kwargs)
@@ -224,6 +224,7 @@ class MyProcess():
                 stderr=config['err']['pipe'],
                 #bufsize=1,
                 close_fds=ON_POSIX,
+                env=self.kwargs.env,
             )
         except FileNotFoundError as e:
             self._stop = True
