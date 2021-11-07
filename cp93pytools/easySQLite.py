@@ -204,13 +204,13 @@ class IndexedSQLiteTable(SQLiteTable):
         assert idx, 'Nowhere to get'
         where = self._where()
         rows = self.get_rows_where(where, idx, fields)
-        return rows[0]
+        return rows[0] if rows else None
 
     def get_dict(self, *idx: Any, fields: Sequence[str] = None):
         assert idx, 'Nowhere to get'
         where = self._where()
         dicts = self.get_dicts_where(where, idx, fields)
-        return dicts[0]
+        return dicts[0] if dicts else None
 
     def update_row(self, *idx: Any, **kwargs):
         assert idx, 'Nowhere to set'
