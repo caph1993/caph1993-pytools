@@ -141,6 +141,42 @@ class SQLiteTable:
     def __len__(self) -> int:
         return self.db.table_count(self.table_name)
 
+    def insert_row(self, **kwargs):
+        assert kwargs, 'Nothing to set'
+        table = self.table_name
+        fields = ', '.join(kwargs.keys())
+        marks = ', '.join('?' for _ in kwargs)
+        query = f'INSERT INTO {table} ({fields}) VALUES ({marks})'
+        params = [*kwargs.values()]
+        return self.db._execute(query, params)
+
+    def _to_dict_map(self, fields: Sequence[str] = None):
+        fields = self.columns() if not fields else fields
+        f = lambda row: dict(zip(fields, row))
+        return f
+
+    def _fields(self, fields: Sequence[str] = None):
+        if fields is None:
+            comma_fields = '*'
+        else:
+            # Security check:
+            assert set(fields) <= set(self.columns())
+            comma_fields = ','.join(fields)
+        return comma_fields
+
+    def get_rows_where(self, where: str, args: Iterable[Any] = None,
+                       fields: Sequence[str] = None):
+        table = self.table_name
+        what = self._fields(fields)
+        query = f'SELECT {what} FROM {table} WHERE {where}'
+        return self.db.execute(query, args)
+
+    def get_dicts_where(self, where: str, args: Iterable[Any] = None,
+                        fields: Sequence[str] = None):
+        rows = self.get_rows_where(where, args, fields)
+        to_dict = self._to_dict_map
+        return [to_dict(row) for row in rows]
+
 
 class IndexedSQLiteTable(SQLiteTable):
 
@@ -164,22 +200,17 @@ class IndexedSQLiteTable(SQLiteTable):
         columns = self.index_columns
         return ' AND '.join(f'{c}=?' for c in columns)
 
-    def _fields(self, fields: Sequence[str] = None):
-        if fields is None:
-            comma_fields = '*'
-        else:
-            # Security check:
-            assert set(fields) <= set(self.columns())
-            comma_fields = ','.join(fields)
-        return comma_fields
-
     def get_row(self, *idx: Any, fields: Sequence[str] = None):
         assert idx, 'Nowhere to get'
-        table = self.table_name
-        what = self._fields(fields)
         where = self._where()
-        query = f'SELECT {what} FROM {table} WHERE {where}'
-        return self.db.execute(query, idx)
+        rows = self.get_rows_where(where, idx, fields)
+        return rows[0]
+
+    def get_dict(self, *idx: Any, fields: Sequence[str] = None):
+        assert idx, 'Nowhere to get'
+        where = self._where()
+        dicts = self.get_dicts_where(where, idx, fields)
+        return dicts[0]
 
     def update_row(self, *idx: Any, **kwargs):
         assert idx, 'Nowhere to set'
@@ -194,9 +225,15 @@ class IndexedSQLiteTable(SQLiteTable):
         return did_update
 
     def set_row(self, *idx: Any, **kwargs):
+        assert idx, 'Nowhere to set'
+        for c, v in zip(self.index_columns, idx):
+            if c in kwargs and kwargs[c] != v:
+                msg = (f'Inconsistent idx and kwargs at column ({c}):'
+                       f' ({v}) vs ({kwargs[c]})')
+                raise Exception(msg)
+            kwargs[c] = v
         if not self.update_row(idx, **kwargs):
-            idx_dict = dict(zip(self.index_columns, idx))
-            self.insert_row(**idx_dict, **kwargs)
+            self.insert_row(**kwargs)
         return
 
     def del_row(self, *idx: Any):
@@ -204,16 +241,9 @@ class IndexedSQLiteTable(SQLiteTable):
         table = self.table_name
         where = self._where()
         query = f'DELETE FROM {table} WHERE {where}'
-        return self.db.execute(query, idx)
-
-    def insert_row(self, **kwargs):
-        assert kwargs, 'Nothing to set'
-        table = self.table_name
-        fields = ', '.join(kwargs.keys())
-        marks = ', '.join('?' for _ in kwargs)
-        query = f'INSERT INTO {table} ({fields}) VALUES ({marks})'
-        params = [*kwargs.values()]
-        return self.db._execute(query, params)
+        cur = self.db._execute(query, idx)
+        did_del = cur.rowcount
+        return did_del
 
 
 def test():
