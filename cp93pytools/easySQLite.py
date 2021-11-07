@@ -174,7 +174,7 @@ class SQLiteTable:
     def get_dicts_where(self, where: str, args: Iterable[Any] = None,
                         fields: Sequence[str] = None):
         rows = self.get_rows_where(where, args, fields)
-        to_dict = self._to_dict_map
+        to_dict = self._to_dict_map(fields)
         return [to_dict(row) for row in rows]
 
     def get_unique_dict_where(self, where: str, args: Iterable[Any] = None,
