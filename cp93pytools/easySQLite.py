@@ -177,6 +177,16 @@ class SQLiteTable:
         to_dict = self._to_dict_map
         return [to_dict(row) for row in rows]
 
+    def get_unique_dict_where(self, where: str, args: Iterable[Any] = None,
+                              fields: Sequence[str] = None):
+        dicts = self.get_dicts_where(where, args, fields)
+        n = len(dicts)
+        assert n <= 1, f'Multiple ({n}) results, e.g.: {dicts[:2]}'
+        return dicts[0] if dicts else None
+
+    def get_first_dict(self, fields: Sequence[str] = None):
+        return self.get_unique_dict_where('1=1 LIMIT 1', None, fields)
+
 
 class IndexedSQLiteTable(SQLiteTable):
 
