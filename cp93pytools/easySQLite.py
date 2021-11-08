@@ -261,13 +261,48 @@ class KeyValueSQLiteTable(SQLiteTable):
         return
 
     @contextmanager
-    def exclusive_access(self, *keys: str, delta=0.02, max_duration=0.5):
+    def get_lock(self, *keys: str, max_duration: float = 0.5,
+                 request_every: float = 0.02, timeout: Optional[float] = 10):
+        '''
+        # Wait at most {timeout} seconds to get exclusive access,
+        # requesting every {request_every} seconds
+        with table.get_lock('some_key'):
+            current = table['some_key']
+            ...
+            # No one else can set table['some_key'] = something_else
+            # during next max_duration seconds
+            ...
+            table['some_key'] = some_value
+        '''
         assert keys, 'You must specify keys to be locked explicitely'
         token = 1 + random.random()
         for key in keys:
-            self._lock(key, token, delta, max_duration)
+            self._get_lock(key, token=token, max_duration=max_duration,
+                           request_every=request_every, timeout=timeout)
         try:
-            yield
+            yield True
+        finally:
+            for key in keys:
+                self._unlock(key, token, max_duration)
+        return
+
+    @contextmanager
+    def ask_lock(self, *keys: str, max_duration: float = 0.5):
+        '''
+        with table.ask_lock('some_key') as gained_access:
+            if gained_access:
+                # The resource is mine
+            else:
+                # The resource is locked by other
+        '''
+        assert keys, 'You must specify keys to be locked explicitely'
+        token = 1 + random.random()
+        gained_access = all([
+            self._ask_lock(key, token=token, max_duration=max_duration)
+            for key in keys
+        ])
+        try:
+            yield gained_access
         finally:
             for key in keys:
                 self._unlock(key, token, max_duration)
@@ -277,21 +312,33 @@ class KeyValueSQLiteTable(SQLiteTable):
         lock_keys = ['lock_token', 'locked_until']
         return super().unique_dict(lock_keys, 'key=?', [key])
 
-    def _lock(self, key: str, token: float, delta=0.02, max_duration=1.5):
-        while True:
-            d = self._current_lock(key)
-            if (not d or d['lock_token'] == 0 or
-                    time.time() > d['locked_until']):
-                # Request access, race until next loop
-                super().indexed_by(['key']).set_row(
-                    key,
-                    lock_token=token,
-                    locked_until=time.time() + max_duration,
-                )
-            elif d['lock_token'] == token:
-                break  # Access gained
-            time.sleep(delta)
+    def _get_lock(self, key: str, token: float, max_duration: float,
+                  request_every: float, timeout: float = None):
+        deadline = float('inf') if timeout is None else time.time() + timeout
+        while not self._ask_lock(key, token, max_duration):
+            if time.time() > deadline:
+                raise Exception('TIMEOUT')
+            else:
+                time.sleep(request_every)
         return
+
+    def _ask_lock(self, key: str, token: float, max_duration: float):
+        d = self._current_lock(key)
+        may_request = (not d or d['lock_token'] == 0 or
+                       time.time() > d['locked_until'] or
+                       d['lock_token'] == token)
+        if may_request:
+            # Request access, race until next read
+            super().indexed_by(['key']).set_row(
+                key,
+                lock_token=token,
+                locked_until=time.time() + max_duration,
+            )
+            # Read and check
+            d = self._current_lock(key)
+            if d and d['lock_token'] == token:
+                return True  # Access gained
+        return False
 
     def _unlock(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
@@ -358,5 +405,7 @@ def test():
     print(ob.get_row('key1'))
     print(len(ob))
     table = db.get_table('test1').as_key_value()
-    with table.exclusive_access('last_time', 'last_progress'):
+    with table.get_lock('last_time', 'last_progress'):
         print('I HAVE ACCESS!')
+        with table.ask_lock('last_time') as access:
+            assert not access
