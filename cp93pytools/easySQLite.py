@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections import deque, Counter, OrderedDict
-import json, time
+from contextlib import contextmanager
+import json, time, random
 from json import encoder
 import sqlite3
 from types import FunctionType
@@ -246,27 +247,48 @@ class KeyValueSQLiteTable(SQLiteTable):
 
     def __init__(self, file: str, table_name: str):
         super().__init__(file, table_name)
-        self.lock_timeout = 1.5
         self.db.execute(f'''
         CREATE TABLE IF NOT EXISTS {self.table_name}(
             key text NOT NULL PRIMARY KEY,
             value text NOT NULL,
-            lock int NOT NULL
+            lock double NOT NULL
         )
         ''')
         assert set(self.columns()) == {'key', 'value', 'lock'}
         return
 
-    def __getitem__(self, key: str):
-        delta = 0.05
-        deadline = time.time() + self.lock_timeout
+    @contextmanager
+    def exclusive_access(self, key: str, delta=0.02, wait_timeout=1.5):
+        token = self._get_exclusive_access(delta, wait_timeout)
+        try:
+            yield
+        finally:
+            d = super().unique_dict(['lock'], 'key=?', [key])
+            if d and d['lock'] == token:
+                super().indexed_by(['key']).set_row(key, lock=0)
+        return
+
+    def _get_exclusive_access(self, key: str, delta=0.02, wait_timeout=1.5):
+        token = 1 + random.random()
+        impatience = time.time() + wait_timeout
         while True:
-            d = super().unique_dict(['value', 'lock'], 'key=?', [key])
+            d = super().unique_dict(['lock'], 'key=?', [key])
             if not d:
                 raise KeyError(key)
-            elif not d or d['lock'] == 0 or time.time() >= deadline:
-                return json.loads(d['value'])
+            elif not d or d['lock'] == 0 or time.time() >= impatience:
+                # Request access, race until next loop
+                super().indexed_by(['key']).set_row(key, lock=token)
+            elif d['lock'] == token:
+                # Access gained
+                break
             time.sleep(delta)
+        return token
+
+    def __getitem__(self, key: str):
+        d = super().unique_dict(['value'], 'key=?', [key])
+        if not d:
+            raise KeyError(key)
+        return json.loads(d['value'])
 
     def __setitem__(self, key: str, value: Any):
         super().indexed_by(['key']).set_row(key, value=json.dumps(value))
