@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections import deque, Counter, OrderedDict
 from contextlib import contextmanager
 import json, time, random, logging
+from sqlite3.dbapi2 import ProgrammingError
 from json import encoder
 import sqlite3
 from types import FunctionType
@@ -38,8 +39,8 @@ class SQLiteDB:
         try:
             with self.new_connection() as con:
                 return con.execute(query, params or [])
-        except sqlite3.OperationalError as e:
-            e.args = (*e.args, query, str(params))
+        except sqlite3.Error as e:
+            e.args = (*e.args, query, params)
             raise e
 
     def execute(self, query: str, params: Params = None) -> List[Any]:
@@ -229,7 +230,7 @@ class IndexedSQLiteTable(SQLiteTable):
                        f' ({v}) vs ({kwargs[c]})')
                 raise Exception(msg)
             kwargs[c] = v
-        if not self.update_row(idx, **kwargs):
+        if not self.update_row(*idx, **kwargs):
             self.insert_row(**kwargs)
         return
 
@@ -250,7 +251,7 @@ class KeyValueSQLiteTable(SQLiteTable):
         self.db.execute(f'''
         CREATE TABLE IF NOT EXISTS {self.table_name}(
             key text NOT NULL PRIMARY KEY,
-            value text NOT NULL,
+            value text,
             lock_token double NOT NULL,
             locked_until double NOT NULL
         )
@@ -313,21 +314,21 @@ class KeyValueSQLiteTable(SQLiteTable):
         d = super().unique_dict(['value'], 'key=?', [key])
         if not d:
             raise KeyError(key)
-        return json.loads(d['value'])
+        return json.loads(d['value'] or 'null')
 
     def __setitem__(self, key: str, value: Any):
         super().indexed_by(['key']).set_row(key, value=json.dumps(value))
         return
 
     def values(self):
-        return [json.loads(s) for s in super().column('value')]
+        return [json.loads(s or 'null') for s in super().column('value')]
 
     def keys(self) -> List[str]:
         return [k for k in super().column('key')]
 
     def items(self) -> List[Tuple[str, Any]]:
         items = super().rows(['key', 'value'])
-        return [(k, json.loads(v)) for k, v in items]
+        return [(k, json.loads(v or 'null')) for k, v in items]
 
     def get(self, key: str, default=None):
         try:
@@ -356,3 +357,6 @@ def test():
     ob.set_row('key1', obj='VALUE1')
     print(ob.get_row('key1'))
     print(len(ob))
+    table = db.get_table('test1').as_key_value()
+    with table.exclusive_access('last_time', 'last_progress'):
+        print('I HAVE ACCESS!')
