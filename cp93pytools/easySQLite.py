@@ -255,7 +255,8 @@ class KeyValueSQLiteTable(SQLiteTable):
             locked_until double NOT NULL
         )
         ''')
-        assert set(self.columns()) == {'key', 'value', 'lock'}
+        the_columns = {'key', 'value', 'lock_token', 'locked_until'}
+        assert set(self.columns()) == the_columns, self.columns()
         return
 
     @contextmanager
