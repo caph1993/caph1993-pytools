@@ -15,6 +15,16 @@ def custom_repr(self, *keys):
     return f'{name}({comma_kwargs})'
 
 
+def create_deadline(timeout: Optional[float]):
+    if timeout is None:
+        return float('inf')
+    return time.time() + timeout
+
+
+class SQLiteDBTimeoutError(Exception):
+    pass
+
+
 #Params = Excluding[str, Sequence[Any]] # If Excluding existed
 #Columns = Excluding[str, Sequence[str]] # If Excluding existed
 Params = Union[List[Any], Tuple[Any, ...]]
@@ -261,32 +271,6 @@ class KeyValueSQLiteTable(SQLiteTable):
         return
 
     @contextmanager
-    def get_lock(self, *keys: str, max_duration: float = 0.5,
-                 request_every: float = 0.02, timeout: Optional[float] = 10):
-        '''
-        # Wait at most {timeout} seconds to get exclusive access,
-        # requesting every {request_every} seconds
-        with table.get_lock('some_key'):
-            current = table['some_key']
-            ...
-            # No one else can set table['some_key'] = something_else
-            # during next max_duration seconds
-            ...
-            table['some_key'] = some_value
-        '''
-        assert keys, 'You must specify keys to be locked explicitely'
-        token = 1 + random.random()
-        for key in keys:
-            self._get_lock(key, token=token, max_duration=max_duration,
-                           request_every=request_every, timeout=timeout)
-        try:
-            yield True
-        finally:
-            for key in keys:
-                self._unlock(key, token, max_duration)
-        return
-
-    @contextmanager
     def ask_lock(self, *keys: str, max_duration: float = 0.5):
         '''
         with table.ask_lock('some_key') as gained_access:
@@ -311,16 +295,6 @@ class KeyValueSQLiteTable(SQLiteTable):
     def _current_lock(self, key: str):
         lock_keys = ['lock_token', 'locked_until']
         return super().unique_dict(lock_keys, 'key=?', [key])
-
-    def _get_lock(self, key: str, token: float, max_duration: float,
-                  request_every: float, timeout: float = None):
-        deadline = float('inf') if timeout is None else time.time() + timeout
-        while not self._ask_lock(key, token, max_duration):
-            if time.time() > deadline:
-                raise Exception('TIMEOUT')
-            else:
-                time.sleep(request_every)
-        return
 
     def _ask_lock(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
@@ -357,15 +331,88 @@ class KeyValueSQLiteTable(SQLiteTable):
             super().indexed_by(['key']).set_row(key, lock_token=0)
         return
 
+    @contextmanager
+    def get_lock(self, *keys: str, max_duration: float = 0.5,
+                 request_every: float = 0.02, timeout: Optional[float] = 3):
+        '''
+        # Wait at most {timeout} seconds to get exclusive access,
+        # requesting every {request_every} seconds
+        with table.get_lock('some_key'):
+            current = table['some_key']
+            ...
+            # No one else can set table['some_key'] = something_else
+            # during next max_duration seconds
+            ...
+            table['some_key'] = some_value
+        '''
+        assert keys, 'You must specify keys to be locked explicitely'
+        token = 1 + random.random()
+        for key in keys:
+            deadline = create_deadline(timeout)
+            while not self._ask_lock(key, token, max_duration):
+                if time.time() > deadline:
+                    raise SQLiteDBTimeoutError(timeout)
+                time.sleep(request_every)
+        try:
+            yield True
+        finally:
+            for key in keys:
+                self._unlock(key, token, max_duration)
+        return
+
     def __getitem__(self, key: str):
         d = super().unique_dict(['value'], 'key=?', [key])
         if not d:
             raise KeyError(key)
         return json.loads(d['value'] or 'null')
 
+    def get(self, key: str, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def ask_set(self, key: str, value: Any):
+        with self.ask_lock(key) as gained_access:
+            if gained_access:
+                self.__set_assuming_lock(key, value)
+                return True
+        return False
+
+    def __set_assuming_lock(self, key: str, value: Any):
+        table = super().indexed_by(['key'])
+        table.set_row(key, value=json.dumps(value))
+
+    def set(self, key: str, value: Any, request_every: float = 0.02,
+            timeout: Optional[float] = 3):
+        request = self.get_lock(
+            key,
+            request_every=request_every,
+            timeout=timeout,
+        )
+        with request:
+            self.__set_assuming_lock(key, value)
+
     def __setitem__(self, key: str, value: Any):
-        super().indexed_by(['key']).set_row(key, value=json.dumps(value))
-        return
+        return self.set(key, value)
+
+    def ask_del(self, key: str):
+        token = 1 + random.random()
+        if self._ask_lock(key, token=token, max_duration=0.5):
+            super().indexed_by(['key']).del_row(key)
+            return True  # No unlock needed (deleting unlocks)
+        return False
+
+    def delete(self, key: str, request_every: float = 0.02,
+               timeout: Optional[float] = 3):
+        deadline = create_deadline(timeout)
+        while not self.ask_del(key):
+            if time.time() > deadline:
+                raise SQLiteDBTimeoutError(timeout)
+            time.sleep(request_every)
+
+    def __delitem__(self, key: str):
+        return self.delete(key)
 
     def values(self):
         return [json.loads(s or 'null') for s in super().column('value')]
@@ -376,12 +423,6 @@ class KeyValueSQLiteTable(SQLiteTable):
     def items(self) -> List[Tuple[str, Any]]:
         items = super().rows(['key', 'value'])
         return [(k, json.loads(v or 'null')) for k, v in items]
-
-    def get(self, key: str, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
 
 
 def test():
