@@ -21,11 +21,11 @@ def create_deadline(timeout: Optional[float]):
     return time.time() + timeout
 
 
-class EasySQLiteTimeoutError(Exception):
+class EasySqliteTimeoutError(Exception):
     message = 'Waiting for access token timed out'
 
 
-class EasySQLiteTokenError(Exception):
+class EasySqliteTokenError(Exception):
     message = 'Invalid or expired token'
 
 
@@ -35,7 +35,7 @@ Params = Union[List[Any], Tuple[Any, ...]]
 Columns = Union[List[str], Tuple[str, ...]]
 
 
-class SQLiteDB:
+class SqliteDB:
     '''
     '''
 
@@ -88,7 +88,10 @@ class SQLiteDB:
         return {t: self.get_table(t) for t in names}
 
     def get_table(self, table_name: str):
-        return SQLiteTable(self.file, table_name)
+        return SqliteTable(self.file, table_name)
+
+    def get_store(self, table_name: str):
+        return SqliteTable(self.file, table_name).as_store()
 
     def get_indexed_table(
         self,
@@ -99,7 +102,7 @@ class SQLiteDB:
         return table.indexed_by(index_columns)
 
     def get_key_value_table(self, table_name: str):
-        return self.get_table(table_name).as_key_value()
+        return self.get_table(table_name).as_store()
 
     def table_columns(self, table_name: str):
         return self.get_table(table_name).columns()
@@ -108,12 +111,12 @@ class SQLiteDB:
         return len(self.get_table(table_name))
 
 
-class SQLiteTable:
+class SqliteTable:
 
     def __init__(self, file: str, table_name: str):
         self.file = file
         self.table_name = table_name
-        self.db = SQLiteDB(self.file)
+        self.db = SqliteDB(self.file)
 
     def __repr__(self):
         return custom_repr(self, 'file', 'table_name')
@@ -187,17 +190,17 @@ class SQLiteTable:
         return self.unique_dict(columns, '1=1 LIMIT 1', None)
 
     def indexed_by(self, index_columns: List[str]):
-        return IndexedSQLiteTable(
+        return IndexedSqliteTable(
             self.file,
             self.table_name,
             index_columns,
         )
 
-    def as_key_value(self):
-        return KeyValueSQLiteTable(self.file, self.table_name)
+    def as_store(self):
+        return SqliteStore(self.file, self.table_name)
 
 
-class IndexedSQLiteTable(SQLiteTable):
+class IndexedSqliteTable(SqliteTable):
 
     _repr_keys = ['file', 'table_name', 'index_columns']
 
@@ -258,7 +261,7 @@ class IndexedSQLiteTable(SQLiteTable):
         return did_del
 
 
-class KeyValueSQLiteTable(SQLiteTable):
+class SqliteStore(SqliteTable):
 
     def __init__(self, file: str, table_name: str):
         super().__init__(file, table_name)
@@ -382,8 +385,8 @@ class KeyValueSQLiteTable(SQLiteTable):
         assert keys, 'You must specify keys to be locked explicitely'
         try:
             for key in keys:
-                if not self._ask_access(key, token=token, max_duration=0):
-                    raise EasySQLiteTokenError(key, token)
+                if not self._ask_access(key, token=token, max_duration=0.5):
+                    raise EasySqliteTokenError(key, token)
             yield
         finally:
             if _unlock:
@@ -413,7 +416,7 @@ class KeyValueSQLiteTable(SQLiteTable):
                 deadline = create_deadline(timeout)
                 while not self._ask_access(key, token, max_duration):
                     if time.time() > deadline:
-                        raise EasySQLiteTimeoutError(timeout)
+                        raise EasySqliteTimeoutError(timeout)
                     time.sleep(request_every)
             yield token
         finally:
@@ -459,7 +462,7 @@ class KeyValueSQLiteTable(SQLiteTable):
 
 
 def test():
-    db = SQLiteDB('.test.db')
+    db = SqliteDB('.test.db')
     db.execute(f'''
     CREATE TABLE IF NOT EXISTS objects(
         key TEXT NOT NULL PRIMARY KEY,
@@ -478,7 +481,7 @@ def test():
     ob.set_row('key1', obj='VALUE1')
     print(ob.get_row('key1'))
     print(len(ob))
-    table = db.get_table('test1').as_key_value()
+    table = db.get_table('test1').as_store()
     with table.wait_token('last_time', 'last_progress') as token:
         print(f'I HAVE ACCESS! {token}')
         with table.ask_token('last_time') as access:
