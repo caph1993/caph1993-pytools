@@ -279,9 +279,8 @@ class KeyValueSQLiteTable(SQLiteTable):
     def _lock(self, key: str, token: float, delta=0.02, max_duration=1.5):
         while True:
             d = self._current_lock(key)
-            if not d:
-                raise KeyError(key)
-            if d['lock_token'] == 0 or time.time() > d['locked_until']:
+            if (not d or d['lock_token'] == 0 or
+                    time.time() > d['locked_until']):
                 # Request access, race until next loop
                 super().indexed_by(['key']).set_row(
                     key,
@@ -289,10 +288,9 @@ class KeyValueSQLiteTable(SQLiteTable):
                     locked_until=time.time() + max_duration,
                 )
             elif d['lock_token'] == token:
-                # Access gained
-                break
+                break  # Access gained
             time.sleep(delta)
-        return token
+        return
 
     def _unlock(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
