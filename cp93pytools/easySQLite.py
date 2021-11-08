@@ -1,16 +1,22 @@
 from __future__ import annotations
 from collections import deque, Counter, OrderedDict
-import json
+import json, time
 from json import encoder
 import sqlite3
 from types import FunctionType
-from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Tuple, Type, TypeVar, Union
 
 
 def custom_repr(self, *keys):
     name = self.__class__.__name__
     comma_kwargs = ', '.join(f'{k}={repr(getattr(self, k))}' for k in keys)
     return f'{name}({comma_kwargs})'
+
+
+#Params = Excluding[str, Sequence[Any]] # If Excluding existed
+#Columns = Excluding[str, Sequence[str]] # If Excluding existed
+Params = Union[List[Any], Tuple[Any, ...]]
+Columns = Union[List[str], Tuple[str, ...]]
 
 
 class SQLiteDB:
@@ -24,16 +30,10 @@ class SQLiteDB:
         self.file = file
 
     def new_connection(self):
-        return sqlite3.connect(
-            self.file,
-            check_same_thread=False,
-        )
+        return sqlite3.connect(self.file, check_same_thread=False)
 
-    def _execute(
-        self,
-        query: str,
-        params: Iterable[Any] = None,
-    ) -> sqlite3.Cursor:
+    def _execute(self, query: str, params: Params = None) -> sqlite3.Cursor:
+        assert not isinstance(params, str), f'Did you mean params=[{params}]?'
         try:
             with self.new_connection() as con:
                 return con.execute(query, params or [])
@@ -41,40 +41,31 @@ class SQLiteDB:
             e.args = (*e.args, query, str(params))
             raise e
 
-    def execute(
-        self,
-        query: str,
-        params: Iterable[Any] = None,
-    ) -> List[Any]:
+    def execute(self, query: str, params: Params = None) -> List[Any]:
         return [*self._execute(query, params or [])]
 
-    def execute_column(
-        self,
-        query: str,
-        params: Iterable[Any] = None,
-    ):
+    def execute_column(self, query: str, params: Params = None):
         rows = self.execute(query, params)
         return [first for first, *_ in rows]
 
     _query_table_names = """
-    SELECT name FROM sqlite_master 
-    WHERE type = 'table' 
-    AND name NOT LIKE 'sqlite_%'
-    ORDER BY 1;
+        SELECT name FROM sqlite_master 
+        WHERE type = 'table' 
+        AND name NOT LIKE 'sqlite_%'
+        ORDER BY 1;
     """
 
     def table_names(self):
         return self.execute_column(self._query_table_names)
 
-    _query_table_columns = """
-    SELECT name FROM PRAGMA_TABLE_INFO(?)
+    _query_index_names = """
+        SELECT name FROM sqlite_master 
+        WHERE type = 'index' 
+        ORDER BY 1;
     """
 
-    def table_columns(self, table_name: str):
-        return self.execute_column(
-            self._query_table_columns,
-            [table_name],
-        )
+    def index_names(self):
+        return self.execute_column(self._query_index_names)
 
     def tables(self):
         names = self.table_names()
@@ -91,25 +82,14 @@ class SQLiteDB:
         table = self.get_table(table_name)
         return table.indexed_by(index_columns)
 
-    _query_index_names = """
-        SELECT name FROM sqlite_master 
-        WHERE type = 'index' 
-        ORDER BY 1;
-    """
+    def get_key_value_table(self, table_name: str):
+        return self.get_table(table_name).as_key_value()
 
-    def index_names(self):
-        return self.execute_column(self._query_index_names)
-
-    def table_iter(self, table_name: str):
-        with self.new_connection() as con:
-            return con.execute("SELECT * FROM ?", [table_name])
+    def table_columns(self, table_name: str):
+        return self.get_table(table_name).columns()
 
     def table_count(self, table_name: str):
-        query = f'SELECT COUNT(*) FROM {table_name}'
-        return self.execute(query)[0][0]
-
-    def table_all_rows(self, table_name: str):
-        return [*self.table_iter(table_name)]
+        return len(self.get_table(table_name))
 
 
 class SQLiteTable:
@@ -122,14 +102,73 @@ class SQLiteTable:
     def __repr__(self):
         return custom_repr(self, 'file', 'table_name')
 
+    _query_columns = """
+    SELECT name FROM PRAGMA_TABLE_INFO(?)
+    """
+
     def columns(self):
-        return self.db.table_columns(self.table_name)
+        return self.db.execute_column(self._query_columns, [self.table_name])
 
-    def __iter__(self):
-        return self.db.table_iter(self.table_name)
+    def __len__(self) -> int:
+        query = f'SELECT COUNT(*) FROM {self.table_name}'
+        return self.db.execute(query)[0][0]
 
-    def all_rows(self):
-        return self.db.table_all_rows(self.table_name)
+    def insert_row(self, **kwargs):
+        assert kwargs, 'Nothing to set'
+        table = self.table_name
+        columns = ', '.join(kwargs.keys())
+        marks = ', '.join('?' for _ in kwargs)
+        query = f'INSERT INTO {table} ({columns}) VALUES ({marks})'
+        params = [*kwargs.values()]
+        return self.db._execute(query, params)
+
+    def _make_query(self, columns: Columns = None, where: str = None):
+        table = self.table_name
+        what = self._make_columns(columns)
+        query = f'SELECT {what} FROM {table}'
+        if where is not None:
+            query = f'{query} WHERE {where}'
+        return query
+
+    def _make_columns(self, columns: Columns = None):
+        if columns is None:
+            comma_columns = '*'
+        else:
+            # Security check:
+            assert set(columns) <= set(self.columns())
+            comma_columns = ','.join(columns)
+        return comma_columns
+
+    def rows(self, columns: Columns = None, where: str = None,
+             params: Params = None):
+        query = self._make_query(columns, where)
+        return self.db.execute(query, params)
+
+    def _to_dict_map(self, columns: Columns = None):
+        columns = self.columns() if not columns else columns
+        to_dict = lambda row: dict(zip(columns, row))
+        return to_dict
+
+    def dicts(self, columns: Columns = None, where: str = None,
+              params: Params = None):
+        rows = self.rows(columns, where, params)
+        to_dict = self._to_dict_map(columns)
+        return [to_dict(row) for row in rows]
+
+    def column(self, field: str = None, where: str = None,
+               params: Params = None):
+        columns = None if field is None else [field]
+        return [r[0] for r in self.rows(columns, where, params)]
+
+    def unique_dict(self, columns: Columns = None, where: str = None,
+                    params: Params = None):
+        dicts = self.dicts(columns, where, params)
+        n = len(dicts)
+        assert n <= 1, f'Multiple ({n}) results, e.g.: {dicts[:2]}'
+        return dicts[0] if dicts else None
+
+    def get_first_dict(self, columns: Columns = None):
+        return self.unique_dict(columns, '1=1 LIMIT 1', None)
 
     def indexed_by(self, index_columns: List[str]):
         return IndexedSQLiteTable(
@@ -138,70 +177,17 @@ class SQLiteTable:
             index_columns,
         )
 
-    def __len__(self) -> int:
-        return self.db.table_count(self.table_name)
-
-    def insert_row(self, **kwargs):
-        assert kwargs, 'Nothing to set'
-        table = self.table_name
-        fields = ', '.join(kwargs.keys())
-        marks = ', '.join('?' for _ in kwargs)
-        query = f'INSERT INTO {table} ({fields}) VALUES ({marks})'
-        params = [*kwargs.values()]
-        return self.db._execute(query, params)
-
-    def _to_dict_map(self, fields: Sequence[str] = None):
-        fields = self.columns() if not fields else fields
-        f = lambda row: dict(zip(fields, row))
-        return f
-
-    def _fields(self, fields: Sequence[str] = None):
-        if fields is None:
-            comma_fields = '*'
-        else:
-            # Security check:
-            assert set(fields) <= set(self.columns())
-            comma_fields = ','.join(fields)
-        return comma_fields
-
-    def get_rows_where(self, where: str, args: Iterable[Any] = None,
-                       fields: Sequence[str] = None):
-        table = self.table_name
-        what = self._fields(fields)
-        query = f'SELECT {what} FROM {table} WHERE {where}'
-        return self.db.execute(query, args)
-
-    def get_dicts_where(self, where: str, args: Iterable[Any] = None,
-                        fields: Sequence[str] = None):
-        rows = self.get_rows_where(where, args, fields)
-        to_dict = self._to_dict_map(fields)
-        return [to_dict(row) for row in rows]
-
-    def get_unique_dict_where(self, where: str, args: Iterable[Any] = None,
-                              fields: Sequence[str] = None):
-        dicts = self.get_dicts_where(where, args, fields)
-        n = len(dicts)
-        assert n <= 1, f'Multiple ({n}) results, e.g.: {dicts[:2]}'
-        return dicts[0] if dicts else None
-
-    def get_first_dict(self, fields: Sequence[str] = None):
-        return self.get_unique_dict_where('1=1 LIMIT 1', None, fields)
+    def as_key_value(self):
+        return KeyValueSQLiteTable(self.file, self.table_name)
 
 
 class IndexedSQLiteTable(SQLiteTable):
 
     _repr_keys = ['file', 'table_name', 'index_columns']
 
-    def __init__(
-        self,
-        file: str,
-        table_name: str,
-        index_columns: List[str],
-    ):
-        self.file = file
-        self.table_name = table_name
+    def __init__(self, file: str, table_name: str, index_columns: List[str]):
+        super().__init__(file, table_name)
         self.index_columns = index_columns
-        self.db = SQLiteDB(self.file)
 
     def __repr__(self):
         return custom_repr(self, 'file', 'table_name', 'index_columns')
@@ -210,16 +196,16 @@ class IndexedSQLiteTable(SQLiteTable):
         columns = self.index_columns
         return ' AND '.join(f'{c}=?' for c in columns)
 
-    def get_row(self, *idx: Any, fields: Sequence[str] = None):
+    def get_row(self, *idx: Any, columns: Columns = None):
         assert idx, 'Nowhere to get'
         where = self._where()
-        rows = self.get_rows_where(where, idx, fields)
+        rows = self.rows(columns, where, idx)
         return rows[0] if rows else None
 
-    def get_dict(self, *idx: Any, fields: Sequence[str] = None):
+    def get_dict(self, *idx: Any, columns: Columns = None):
         assert idx, 'Nowhere to get'
         where = self._where()
-        dicts = self.get_dicts_where(where, idx, fields)
+        dicts = self.dicts(columns, where, idx)
         return dicts[0] if dicts else None
 
     def update_row(self, *idx: Any, **kwargs):
@@ -254,6 +240,53 @@ class IndexedSQLiteTable(SQLiteTable):
         cur = self.db._execute(query, idx)
         did_del = cur.rowcount
         return did_del
+
+
+class KeyValueSQLiteTable(SQLiteTable):
+
+    def __init__(self, file: str, table_name: str):
+        super().__init__(file, table_name)
+        self.lock_timeout = 1.5
+        self.db.execute(f'''
+        CREATE TABLE IF NOT EXISTS {self.table_name}(
+            key text NOT NULL PRIMARY KEY,
+            value text NOT NULL,
+            lock int NOT NULL
+        )
+        ''')
+        assert set(self.columns()) == {'key', 'value', 'lock'}
+        return
+
+    def __getitem__(self, key: str):
+        delta = 0.05
+        deadline = time.time() + self.lock_timeout
+        while True:
+            d = super().unique_dict(['value', 'lock'], 'key=?', [key])
+            if not d:
+                raise KeyError(key)
+            elif not d or d['lock'] == 0 or time.time() >= deadline:
+                return json.loads(d['value'])
+            time.sleep(delta)
+
+    def __setitem__(self, key: str, value: Any):
+        super().indexed_by(['key']).set_row(key, value=json.dumps(value))
+        return
+
+    def values(self):
+        return [json.loads(s) for s in super().column('value')]
+
+    def keys(self) -> List[str]:
+        return [k for k in super().column('key')]
+
+    def items(self) -> List[Tuple[str, Any]]:
+        items = super().rows(['key', 'value'])
+        return [(k, json.loads(v)) for k, v in items]
+
+    def get(self, key: str, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 def test():
