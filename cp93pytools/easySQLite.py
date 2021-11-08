@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections import deque, Counter, OrderedDict
 from contextlib import contextmanager
-import json, time, random
+import json, time, random, logging
 from json import encoder
 import sqlite3
 from types import FunctionType
@@ -251,38 +251,64 @@ class KeyValueSQLiteTable(SQLiteTable):
         CREATE TABLE IF NOT EXISTS {self.table_name}(
             key text NOT NULL PRIMARY KEY,
             value text NOT NULL,
-            lock double NOT NULL
+            lock_token double NOT NULL,
+            locked_until double NOT NULL
         )
         ''')
         assert set(self.columns()) == {'key', 'value', 'lock'}
         return
 
     @contextmanager
-    def exclusive_access(self, key: str, delta=0.02, wait_timeout=1.5):
-        token = self._get_exclusive_access(delta, wait_timeout)
+    def exclusive_access(self, *keys: str, delta=0.02, max_duration=0.5):
+        assert keys, 'You must specify keys to be locked explicitely'
+        token = 1 + random.random()
+        for key in keys:
+            self._lock(key, token, delta, max_duration)
         try:
             yield
         finally:
-            d = super().unique_dict(['lock'], 'key=?', [key])
-            if d and d['lock'] == token:
-                super().indexed_by(['key']).set_row(key, lock=0)
+            for key in keys:
+                self._unlock(key, token, max_duration)
         return
 
-    def _get_exclusive_access(self, key: str, delta=0.02, wait_timeout=1.5):
-        token = 1 + random.random()
-        impatience = time.time() + wait_timeout
+    def _current_lock(self, key: str):
+        lock_keys = ['lock_token', 'locked_until']
+        return super().unique_dict(lock_keys, 'key=?', [key])
+
+    def _lock(self, key: str, token: float, delta=0.02, max_duration=1.5):
         while True:
-            d = super().unique_dict(['lock'], 'key=?', [key])
+            d = self._current_lock(key)
             if not d:
                 raise KeyError(key)
-            elif not d or d['lock'] == 0 or time.time() >= impatience:
+            if d['lock_token'] == 0 or time.time() > d['locked_until']:
                 # Request access, race until next loop
-                super().indexed_by(['key']).set_row(key, lock=token)
-            elif d['lock'] == token:
+                super().indexed_by(['key']).set_row(
+                    key,
+                    lock_token=token,
+                    locked_until=time.time() + max_duration,
+                )
+            elif d['lock_token'] == token:
                 # Access gained
                 break
             time.sleep(delta)
         return token
+
+    def _unlock(self, key: str, token: float, max_duration: float):
+        d = self._current_lock(key)
+        if not d:
+            logging.warning(
+                f'Key {repr(key)} was deleted by another thread or process during exclusive access'
+            )
+            return
+        remaining = d['locked_until'] - time.time()
+        if remaining < 0:
+            ms = round(-remaining * 1000)
+            logging.warning(
+                f'Locked {repr(key)} during {ms}ms more than max_duration={max_duration}s'
+            )
+        if d['lock_token'] == token:
+            super().indexed_by(['key']).set_row(key, lock_token=0)
+        return
 
     def __getitem__(self, key: str):
         d = super().unique_dict(['value'], 'key=?', [key])
