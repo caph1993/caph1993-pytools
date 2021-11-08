@@ -21,8 +21,12 @@ def create_deadline(timeout: Optional[float]):
     return time.time() + timeout
 
 
-class SQLiteDBTimeoutError(Exception):
-    pass
+class EasySQLiteTimeoutError(Exception):
+    message = 'Waiting for access token timed out'
+
+
+class EasySQLiteTokenError(Exception):
+    message = 'Invalid or expired token'
 
 
 #Params = Excluding[str, Sequence[Any]] # If Excluding existed
@@ -270,33 +274,155 @@ class KeyValueSQLiteTable(SQLiteTable):
         assert set(self.columns()) == the_columns, self.columns()
         return
 
-    @contextmanager
-    def ask_lock(self, *keys: str, max_duration: float = 0.5):
-        '''
-        with table.ask_lock('some_key') as gained_access:
-            if gained_access:
-                # The resource is mine
-            else:
-                # The resource is locked by other
-        '''
-        assert keys, 'You must specify keys to be locked explicitely'
-        token = 1 + random.random()
-        gained_access = all([
-            self._ask_lock(key, token=token, max_duration=max_duration)
-            for key in keys
-        ])
+    def __getitem__(self, key: str):
+        d = super().unique_dict(['value'], 'key=?', [key])
+        if not d:
+            raise KeyError(key)
+        return json.loads(d['value'] or 'null')
+
+    def get(self, key: str, default=None):
         try:
-            yield gained_access
-        finally:
-            for key in keys:
-                self._unlock(key, token, max_duration)
-        return
+            return self[key]
+        except KeyError:
+            return default
+
+    def values(self):
+        return [json.loads(s or 'null') for s in super().column('value')]
+
+    def keys(self) -> List[str]:
+        return [k for k in super().column('key')]
+
+    def items(self) -> List[Tuple[str, Any]]:
+        items = super().rows(['key', 'value'])
+        return [(k, json.loads(v or 'null')) for k, v in items]
+
+    def __set_assuming_token(self, key: str, value: Any):
+        table = super().indexed_by(['key'])
+        table.set_row(key, value=json.dumps(value))
+
+    def __del_assuming_token(self, key: str):
+        return super().indexed_by(['key']).del_row(key)
 
     def _current_lock(self, key: str):
         lock_keys = ['lock_token', 'locked_until']
         return super().unique_dict(lock_keys, 'key=?', [key])
 
-    def _ask_lock(self, key: str, token: float, max_duration: float):
+    def set(self, key: str, value: Any, token: float):
+        '''
+        Requires a token provided by the exclusive access context
+        manager self.wait_token() or self.ask_token().
+        '''
+        with self.assert_token(key, token=token):
+            self.__set_assuming_token(key, value)
+        return
+
+    def delete(self, key: str, token: float):
+        '''
+        Requires a token provided by the exclusive access context
+        manager self.wait_token() or self.ask_token().
+        '''
+        with self.assert_token(key, token=token, _unlock=False):
+            self.__del_assuming_token(key)
+        return
+
+    def ask_del(self, key: str):
+        with self.ask_token(key, _unlock=False) as token:
+            if not token:
+                return False
+            self.__del_assuming_token(key)
+        return False
+
+    def ask_set(self, key: str, value: Any):
+        with self.ask_token(key) as token:
+            if not token:
+                return False
+            self.__set_assuming_token(key, value)
+        return False
+
+    def wait_del(self, key: str, request_every: float = 0.02,
+                 timeout: Optional[float] = 3):
+        wait = self.wait_token(key, request_every=request_every,
+                               timeout=timeout, _unlock=False)
+        with wait:
+            self.__del_assuming_token(key)
+
+    def wait_set(self, key: str, value: Any, request_every: float = 0.02,
+                 timeout: Optional[float] = 3):
+        wait = self.wait_token(key, request_every=request_every,
+                               timeout=timeout)
+        with wait as token:
+            self.set(key, value, token)
+
+    @contextmanager
+    def ask_token(self, *keys: str, max_duration: float = 0.5, _unlock=True):
+        '''
+        with table.ask_token('some_key') as token:
+            if not token:
+                # The resource is locked by other
+            else:
+                # The resource is mine
+                table.set('some_key', some_value, token)
+        '''
+        assert keys, 'You must specify keys to be locked explicitely'
+        token = 1 + random.random()
+        try:
+            gained_access = all([
+                self._ask_access(key, token=token, max_duration=max_duration)
+                for key in keys
+            ])
+            yield token if gained_access else None
+        finally:
+            if _unlock:
+                for key in keys:
+                    self._unlock(key, token, max_duration)
+        return
+
+    @contextmanager
+    def assert_token(self, *keys: str, token: float, _unlock=True):
+        assert keys, 'You must specify keys to be locked explicitely'
+        try:
+            for key in keys:
+                if not self._ask_access(key, token=token, max_duration=0):
+                    raise EasySQLiteTokenError(key, token)
+            yield
+        finally:
+            if _unlock:
+                for key in keys:
+                    self._unlock(key, token, 0)
+        return
+
+    @contextmanager
+    def wait_token(self, *keys: str, max_duration: float = 0.5,
+                   request_every: float = 0.02, timeout: Optional[float] = 3,
+                   _token: float = None, _unlock=True):
+        '''
+        # Wait at most {timeout} seconds to get exclusive access,
+        # requesting every {request_every} seconds
+        with table.wait_token('some_key') as token:
+            current = table['some_key']
+            ...
+            # No one else can set some_key
+            # during next {max_duration} seconds
+            ...
+            current = table.set('some_key', some_value, token)
+        '''
+        assert keys, 'You must specify keys to be locked explicitely'
+        token = 1 + random.random() if _token is None else _token
+        try:
+            for key in keys:
+                deadline = create_deadline(timeout)
+                while not self._ask_access(key, token, max_duration):
+                    if time.time() > deadline:
+                        raise EasySQLiteTimeoutError(timeout)
+                    time.sleep(request_every)
+            yield token
+        finally:
+            if _unlock:
+                for key in keys:
+                    self._unlock(key, token, max_duration)
+        return
+
+    def _ask_access(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
         may_request = (not d or d['lock_token'] == 0 or
                        time.time() > d['locked_until'] or
@@ -331,99 +457,6 @@ class KeyValueSQLiteTable(SQLiteTable):
             super().indexed_by(['key']).set_row(key, lock_token=0)
         return
 
-    @contextmanager
-    def get_lock(self, *keys: str, max_duration: float = 0.5,
-                 request_every: float = 0.02, timeout: Optional[float] = 3):
-        '''
-        # Wait at most {timeout} seconds to get exclusive access,
-        # requesting every {request_every} seconds
-        with table.get_lock('some_key'):
-            current = table['some_key']
-            ...
-            # No one else can set table['some_key'] = something_else
-            # during next max_duration seconds
-            ...
-            table['some_key'] = some_value
-        '''
-        assert keys, 'You must specify keys to be locked explicitely'
-        token = 1 + random.random()
-        for key in keys:
-            deadline = create_deadline(timeout)
-            while not self._ask_lock(key, token, max_duration):
-                if time.time() > deadline:
-                    raise SQLiteDBTimeoutError(timeout)
-                time.sleep(request_every)
-        try:
-            yield True
-        finally:
-            for key in keys:
-                self._unlock(key, token, max_duration)
-        return
-
-    def __getitem__(self, key: str):
-        d = super().unique_dict(['value'], 'key=?', [key])
-        if not d:
-            raise KeyError(key)
-        return json.loads(d['value'] or 'null')
-
-    def get(self, key: str, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    def ask_set(self, key: str, value: Any):
-        with self.ask_lock(key) as gained_access:
-            if gained_access:
-                self.__set_assuming_lock(key, value)
-                return True
-        return False
-
-    def __set_assuming_lock(self, key: str, value: Any):
-        table = super().indexed_by(['key'])
-        table.set_row(key, value=json.dumps(value))
-
-    def set(self, key: str, value: Any, request_every: float = 0.02,
-            timeout: Optional[float] = 3):
-        request = self.get_lock(
-            key,
-            request_every=request_every,
-            timeout=timeout,
-        )
-        with request:
-            self.__set_assuming_lock(key, value)
-
-    def __setitem__(self, key: str, value: Any):
-        return self.set(key, value)
-
-    def ask_del(self, key: str):
-        token = 1 + random.random()
-        if self._ask_lock(key, token=token, max_duration=0.5):
-            super().indexed_by(['key']).del_row(key)
-            return True  # No unlock needed (deleting unlocks)
-        return False
-
-    def delete(self, key: str, request_every: float = 0.02,
-               timeout: Optional[float] = 3):
-        deadline = create_deadline(timeout)
-        while not self.ask_del(key):
-            if time.time() > deadline:
-                raise SQLiteDBTimeoutError(timeout)
-            time.sleep(request_every)
-
-    def __delitem__(self, key: str):
-        return self.delete(key)
-
-    def values(self):
-        return [json.loads(s or 'null') for s in super().column('value')]
-
-    def keys(self) -> List[str]:
-        return [k for k in super().column('key')]
-
-    def items(self) -> List[Tuple[str, Any]]:
-        items = super().rows(['key', 'value'])
-        return [(k, json.loads(v or 'null')) for k, v in items]
-
 
 def test():
     db = SQLiteDB('.test.db')
@@ -446,7 +479,7 @@ def test():
     print(ob.get_row('key1'))
     print(len(ob))
     table = db.get_table('test1').as_key_value()
-    with table.get_lock('last_time', 'last_progress'):
-        print('I HAVE ACCESS!')
-        with table.ask_lock('last_time') as access:
-            assert not access
+    with table.wait_token('last_time', 'last_progress') as token:
+        print(f'I HAVE ACCESS! {token}')
+        with table.ask_token('last_time') as access:
+            assert access is None
