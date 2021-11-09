@@ -324,12 +324,12 @@ class SqliteStore(SqliteTable):
         Requires a token provided by the exclusive access context
         manager self.wait_token() or self.ask_token().
         '''
-        with self.assert_token(key, token=token, _warn_del=False):
+        with self.assert_token(key, token=token):
             self.__del_assuming_token(key)
         return
 
     def ask_del(self, key: str):
-        with self.ask_token(key, _warn_del=False) as token:
+        with self.ask_token(key) as token:
             if not token:
                 return False
             self.__del_assuming_token(key)
@@ -345,7 +345,7 @@ class SqliteStore(SqliteTable):
     def wait_del(self, key: str, request_every: float = 0.02,
                  timeout: Optional[float] = 3):
         wait = self.wait_token(key, request_every=request_every,
-                               timeout=timeout, _warn_del=False)
+                               timeout=timeout)
         with wait:
             self.__del_assuming_token(key)
 
@@ -357,7 +357,7 @@ class SqliteStore(SqliteTable):
             self.set(key, value, token)
 
     @contextmanager
-    def ask_token(self, *keys: str, max_duration: float = 0.5, _warn_del=True):
+    def ask_token(self, *keys: str, max_duration: float = 0.5):
         '''
         with table.ask_token('some_key') as token:
             if not token:
@@ -376,11 +376,11 @@ class SqliteStore(SqliteTable):
             yield token if gained_access else None
         finally:
             for key in keys:
-                self._unlock(key, token, max_duration, _warn_del)
+                self._unlock(key, token, max_duration)
         return
 
     @contextmanager
-    def assert_token(self, *keys: str, token: float, _warn_del=True):
+    def assert_token(self, *keys: str, token: float):
         assert keys, 'You must specify keys to be locked explicitely'
         max_duration = 0.5
         try:
@@ -391,7 +391,7 @@ class SqliteStore(SqliteTable):
             yield
         finally:
             for key in keys:
-                self._unlock(key, token, max_duration, _warn_del)
+                self._unlock(key, token, max_duration)
         return
 
     @contextmanager
@@ -421,7 +421,7 @@ class SqliteStore(SqliteTable):
             yield token
         finally:
             for key in keys:
-                self._unlock(key, token, max_duration, _warn_del)
+                self._unlock(key, token, max_duration)
         return
 
     def _ask_access(self, key: str, token: float, max_duration: float):
@@ -455,14 +455,10 @@ class SqliteStore(SqliteTable):
             return True
         return False
 
-    def _unlock(self, key: str, token: float, max_duration: float,
-                _warn_del: bool):
+    def _unlock(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
         if not d:
-            if _warn_del:
-                logging.warning(
-                    f'Key {repr(key)} was deleted by another thread or process during exclusive access'
-                )
+            # Entry was deleted (and unlocked)
             return
         remaining = d['locked_until'] - time.time()
         if remaining < 0:
