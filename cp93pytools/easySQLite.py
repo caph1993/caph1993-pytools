@@ -3,6 +3,7 @@ from collections import deque, Counter, OrderedDict
 from contextlib import contextmanager
 import json, time, random, logging
 from sqlite3.dbapi2 import ProgrammingError
+from pathlib import Path
 from json import encoder
 import sqlite3
 from types import FunctionType
@@ -33,6 +34,7 @@ class EasySqliteTokenError(Exception):
 #Columns = Excluding[str, Sequence[str]] # If Excluding existed
 Params = Union[List[Any], Tuple[Any, ...]]
 Columns = Union[List[str], Tuple[str, ...]]
+FilePath = Union[str, Path]
 
 
 class SqliteDB:
@@ -42,7 +44,7 @@ class SqliteDB:
     def __repr__(self):
         return custom_repr(self, 'file')
 
-    def __init__(self, file=':memory:'):
+    def __init__(self, file: FilePath):
         self.file = file
 
     def new_connection(self):
@@ -113,7 +115,7 @@ class SqliteDB:
 
 class SqliteTable:
 
-    def __init__(self, file: str, table_name: str):
+    def __init__(self, file: FilePath, table_name: str):
         self.file = file
         self.table_name = table_name
         self.db = SqliteDB(self.file)
@@ -204,7 +206,8 @@ class IndexedSqliteTable(SqliteTable):
 
     _repr_keys = ['file', 'table_name', 'index_columns']
 
-    def __init__(self, file: str, table_name: str, index_columns: List[str]):
+    def __init__(self, file: FilePath, table_name: str,
+                 index_columns: List[str]):
         super().__init__(file, table_name)
         self.index_columns = index_columns
 
@@ -263,7 +266,7 @@ class IndexedSqliteTable(SqliteTable):
 
 class SqliteStore(SqliteTable):
 
-    def __init__(self, file: str, table_name: str):
+    def __init__(self, file: FilePath, table_name: str):
         super().__init__(file, table_name)
         self.db.execute(f'''
         CREATE TABLE IF NOT EXISTS {self.table_name}(
