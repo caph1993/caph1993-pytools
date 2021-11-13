@@ -143,6 +143,17 @@ class SqliteTable:
         params = [*kwargs.values()]
         return self.db._execute(query, params)
 
+    def insert_row_or_ignore(self, **kwargs):
+        assert kwargs, 'Nothing to set'
+        table = self.table_name
+        columns = ', '.join(kwargs.keys())
+        marks = ', '.join('?' for _ in kwargs)
+        query = f'INSERT OR IGNORE INTO {table} ({columns}) VALUES ({marks})'
+        params = [*kwargs.values()]
+        cursor = self.db._execute(query, params)
+        did_insert = (cursor.rowcount != 0)
+        return did_insert
+
     def _make_query(self, columns: Columns = None, where: str = None):
         table = self.table_name
         what = self._make_columns(columns)
@@ -446,17 +457,11 @@ class SqliteStore(SqliteTable):
         if cursor.rowcount > 0:  # Race winner
             return True
         # Maybe the key was not even present:
-        cursor = self.db._execute(
-            f'''
-        INSERT OR IGNORE
-        INTO
-            {self.table_name} (key, lock_token, locked_until)
-        VALUES
-            (?,?,?)
-        ''', [key, token, until])
-        if cursor.rowcount > 0:
-            return True
-        return False
+        return self.insert_row_or_ignore(
+            key=key,
+            lock_token=token,
+            locked_until=until,
+        )
 
     def _unlock(self, key: str, token: float, max_duration: float):
         d = self._current_lock(key)
