@@ -2,6 +2,7 @@ import functools
 import weakref
 from typing import Any, Callable, Optional, Type, TypeVar, Union, cast
 from typing_extensions import Protocol
+from typing import Callable, TypeVar, Generic
 '''
 Typing this library correctly is impossible right now.
 
@@ -117,6 +118,28 @@ def set_cached_property(cls):
 
 
 set_cachedproperty = set_cached_property  # Previous versions
+
+F = TypeVar('F', bound=Callable[..., Any])
+
+
+class copy_signature(Generic[F]):
+
+    def __init__(self, target: F) -> None:
+        ...
+
+    def __call__(self, wrapped: Callable[..., Any]) -> F:
+        return cast(F, wrapped)
+
+
+class copy_docs_and_signature(Generic[F]):
+
+    def __init__(self, target: F) -> None:
+        self.target = target
+
+    def __call__(self, wrapped: Callable[..., Any]) -> F:
+        wrapped.__doc__ = self.target.__doc__
+        return cast(F, wrapped)
+
 
 if False:
 
