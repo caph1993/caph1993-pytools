@@ -247,6 +247,21 @@ class SqliteTable:
     def random_dict(self, columns: Columns = None):
         return self.random_dicts(columns, 1)[0]
 
+    def _make_where_equal(self, suffix='', **where):
+        columns = [*where.keys()]
+        params = [where[k] for k in columns]
+        where_str = ' AND '.join(f'{c}=?' for c in columns)
+        where_str = f'{where_str} {suffix}'
+        return where_str, params
+
+    def dicts_where_equal(self, columns: Columns = None, suffix='', **where):
+        where_str, params = self._make_where_equal(suffix=suffix, **where)
+        return self.dicts(columns, where_str, params)
+
+    def rows_where_equal(self, columns: Columns = None, suffix='', **where):
+        where_str, params = self._make_where_equal(suffix=suffix, **where)
+        return self.rows(columns, where_str, params)
+
 
 class IndexedSqliteTable(SqliteTable):
 
