@@ -2,6 +2,8 @@ import sys
 import importlib
 from types import ModuleType
 
+# https://stackoverflow.com/q/42870428
+
 
 def deep_reload(m: ModuleType):
     name = m.__name__  # get the name that is used in sys.modules
