@@ -247,14 +247,16 @@ class SqliteTable:
     def random_dict(self, columns: Columns = None):
         return self.random_dicts(columns, 1)[0]
 
-    def _make_where_equal(self, suffix='', **where):
+    def _make_where_equal(self, suffix: str = None, **where):
         columns = [*where.keys()]
         params = [where[k] for k in columns]
         where_str = ' AND '.join(f'{c}=?' for c in columns)
-        where_str = f'{where_str} {suffix}'
+        if suffix is not None:
+            where_str = f'{where_str} {suffix}'
         return where_str, params
 
-    def dicts_where_equal(self, columns: Columns = None, suffix='', **where):
+    def dicts_where_equal(self, columns: Columns = None, suffix: str = None,
+                          **where):
         where_str, params = self._make_where_equal(suffix=suffix, **where)
         return self.dicts(columns, where_str, params)
 
