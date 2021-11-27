@@ -212,6 +212,41 @@ class SqliteTable:
     def as_store(self):
         return SqliteStore(self.file, self.table_name)
 
+    def random_row(self, columns: Columns = None):
+        return self.random_rows(columns, 1)[0]
+
+    def random_rows(self, columns: Columns = None, limit: int = None):
+        '''
+        Pick random rows. Repetitions may occur but with low probability.
+        '''
+        assert limit is not None
+        n_total = len(self)
+        assert n_total > 0 or limit == 0, f'The table is empty'
+        rows = []
+        while len(rows) < limit:
+            rows.extend(self._random_rows(columns, limit, n_total))
+        return rows
+
+    def _random_rows(self, columns: Optional[Columns], limit: int,
+                     n_total: int):
+        assert limit is not None
+        if n_total - limit < 1000:
+            where = '1=1 ORDER BY random() LIMIT ?'
+            rows = self.rows(columns, where, [limit])
+        else:
+            div = 1 + n_total // (2 * limit)
+            where = 'random() % ? = 0 ORDER BY random() LIMIT ?'
+            rows = self.rows(columns, where, [div, limit])
+        return rows
+
+    def random_dicts(self, columns: Columns = None, limit: int = None):
+        rows = self.random_rows(columns, limit)
+        to_dict = self._to_dict_map(columns)
+        return [to_dict(row) for row in rows]
+
+    def random_dict(self, columns: Columns = None):
+        return self.random_dicts(columns, 1)[0]
+
 
 class IndexedSqliteTable(SqliteTable):
 
