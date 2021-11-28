@@ -23,11 +23,11 @@ class SqliteDB:
     '''
     '''
 
-    def __repr__(self):
-        return custom_repr(self, 'file')
-
     def __init__(self, file: FilePath):
         self.file = file
+
+    def __repr__(self):
+        return custom_repr(self, 'file')
 
     def new_connection(self):
         return sqlite3.connect(self.file, check_same_thread=False)

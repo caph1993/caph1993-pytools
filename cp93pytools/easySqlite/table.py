@@ -18,7 +18,7 @@ from .table_signatures_ import table_signatures as T
 Record = Dict[str, Data]
 
 
-class SqliteTable(SqliteDB):
+class SqliteTable:
     '''
     Sqlite table object.
 
