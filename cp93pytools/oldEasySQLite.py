@@ -7,7 +7,7 @@ from pathlib import Path
 from json import encoder
 import sqlite3
 from types import FunctionType
-from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
 
 
 def custom_repr(self, *keys):
@@ -101,7 +101,7 @@ class SqliteDB:
         index_columns: List[str],
     ):
         table = self.get_table(table_name)
-        return table.indexed_by(index_columns)
+        return table._indexed_by(*index_columns)
 
     def get_key_value_table(self, table_name: str):
         return self.get_table(table_name).as_store()
@@ -135,7 +135,7 @@ class SqliteTable:
         return self.db.execute(query)[0][0]
 
     def insert_row(self, **kwargs):
-        assert kwargs, 'Nothing to set'
+        assert kwargs, 'Nothing to insert'
         table = self.table_name
         columns = ', '.join(kwargs.keys())
         marks = ', '.join('?' for _ in kwargs)
@@ -202,11 +202,15 @@ class SqliteTable:
     def get_first_dict(self, columns: Columns = None):
         return self.unique_dict(columns, '1=1 LIMIT 1', None)
 
-    def indexed_by(self, index_columns: List[str]):
+    def indexed_by(self, index_columns: Sequence[str]):
+        # OLD VERSION
+        return self._indexed_by(*index_columns)
+
+    def _indexed_by(self, *index_columns: str):
         return IndexedSqliteTable(
             self.file,
             self.table_name,
-            index_columns,
+            *index_columns,
         )
 
     def as_store(self):
@@ -247,30 +251,12 @@ class SqliteTable:
     def random_dict(self, columns: Columns = None):
         return self.random_dicts(columns, 1)[0]
 
-    def _make_where_equal(self, suffix: str = None, **where):
-        columns = [*where.keys()]
-        params = [where[k] for k in columns]
-        where_str = ' AND '.join(f'{c}=?' for c in columns)
-        if suffix is not None:
-            where_str = f'{where_str} {suffix}'
-        return where_str, params
-
-    def dicts_where_equal(self, columns: Columns = None, suffix: str = None,
-                          **where):
-        where_str, params = self._make_where_equal(suffix=suffix, **where)
-        return self.dicts(columns, where_str, params)
-
-    def rows_where_equal(self, columns: Columns = None, suffix='', **where):
-        where_str, params = self._make_where_equal(suffix=suffix, **where)
-        return self.rows(columns, where_str, params)
-
 
 class IndexedSqliteTable(SqliteTable):
 
     _repr_keys = ['file', 'table_name', 'index_columns']
 
-    def __init__(self, file: FilePath, table_name: str,
-                 index_columns: List[str]):
+    def __init__(self, file: FilePath, table_name: str, *index_columns: str):
         super().__init__(file, table_name)
         self.index_columns = index_columns
 
@@ -366,11 +352,11 @@ class SqliteStore(SqliteTable):
         return [(k, json.loads(v or 'null')) for k, v in items]
 
     def __set_assuming_token(self, key: str, value: Any):
-        table = super().indexed_by(['key'])
+        table = super()._indexed_by('key')
         table.set_row(key, value=json.dumps(value))
 
     def __del_assuming_token(self, key: str):
-        return super().indexed_by(['key']).del_row(key)
+        return super()._indexed_by('key').del_row(key)
 
     def _current_lock(self, key: str):
         lock_keys = ['lock_token', 'locked_until']
@@ -527,7 +513,7 @@ class SqliteStore(SqliteTable):
                 f'Locked {repr(key)} during {ms}ms more than max_duration={max_duration}s'
             )
         if d['lock_token'] == token:
-            super().indexed_by(['key']).set_row(key, lock_token=-1)
+            super()._indexed_by('key').set_row(key, lock_token=-1)
         return
 
 
