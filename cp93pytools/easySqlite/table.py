@@ -11,6 +11,7 @@ from .queries import (
     QueryHeadDelete,
     QueryHeadInsert,
     QueryHeadUpdate,
+    Where,
 )
 from .table_signatures_ import table_signatures as T
 # from ..methodtools import cached_property
@@ -124,13 +125,30 @@ class SqliteTable(SqliteDB):
 
     @T.get_value
     def get_value(self, column: str, **kw):
-        kw['limit'] = 1
-        values = self.column(column, **kw)
+        values = self.column(column, limit=1, **kw)
         return values[0] if values else None
 
     @T.count
     def count(self, **kw):
         return int(self.value('count(*)'))
+
+    # Random high-level select methods
+
+    @T.random_dicts
+    def random_dicts(self, *columns: str, limit: int, **kw):
+        rows = self.random_rows(*columns, limit=limit, **kw)
+        to_dict = self._to_dict_map(columns)
+        return [to_dict(row) for row in rows]
+
+    @T.random_dict
+    def random_dict(self, *columns: str, **kw):
+        return self.random_dicts(*columns, limit=1, **kw)[0]
+
+    @T.random_rows
+    def random_rows(self, *columns: str, limit: int, **kw):
+        'Repetitions may occur but with low probability'
+        body = QueryBody(**kw)
+        return self._select_random_rows(columns, int(limit), body)
 
     # Low-level select methods
 
@@ -169,3 +187,50 @@ class SqliteTable(SqliteDB):
             for key, value in zip(keys, row):
                 out[key].append(value)
         return out
+
+    def _select_random_rows(self, columns: Columns, limit: int,
+                            body: QueryBody):
+        n_total: int = self._select_column('count(*)', body)[0]
+        assert n_total > 0 or limit == 0, f'The table is empty'
+        head = QueryHeadSelect(columns, self)
+        body.order_by = ['random()']
+        initial_where = body.where
+        rows: List[List[Data]] = []
+        while len(rows) < limit:
+            assert limit is not None
+            if n_total - limit < 1000:
+                body.limit = limit
+                body.where = initial_where
+                more = [*self._run_query(head, body)]
+            else:
+                div = 1 + n_total // (2 * limit)
+                new_where = Where(f'random() % {div}', '=', 0)
+                body.limit = limit
+                body.where = new_where if not initial_where else initial_where & new_where
+                more = [*self._run_query(head, body)]
+            rows.extend(more)
+        return rows
+
+
+def test():
+    import random
+    table = SqliteTable('.test.db', 'rand_table')
+    table.db.execute(f'''
+        CREATE TABLE IF NOT EXISTS rand_table(
+            key int NOT NULL PRIMARY KEY,
+            age int NOT NULL,
+            prob double NOT NULL
+        )
+    ''')
+
+    print(len(table))
+    for k in set(range(1000)).difference(set(table.column('key'))):
+        record = dict(
+            key=k,
+            age=random.randint(0, 5),
+            prob=round(random.random(), 3),
+        )
+        table.insert(record)
+    print(table.random_dicts(limit=3))
+    print(table.random_dicts(limit=3))
+    print(len(table))

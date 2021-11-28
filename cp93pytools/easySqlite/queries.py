@@ -110,14 +110,14 @@ class QueryPart(abc.ABC):
 
 class QueryBody(QueryPart):
 
-    def __init__(self, where: WhereClause = None, order_by: OrderBy = None,
-                 limit: int = None, **where_eq):
-        if where is None:
-            _where = WhereEQ(**where_eq) if where_eq else None
+    def __init__(self, complex_where: WhereClause = None,
+                 order_by: OrderBy = None, limit: int = None, **where):
+        if complex_where is None:
+            _where = WhereEQ(**where) if where else None
         else:
-            assert not where_eq, ('Use one of (..., where=...) or'
-                                  ' (..., **where_eq), but not both')
-            _where = where
+            assert not where, ('Use one of (..., complex_where=...) or'
+                               ' (..., **where), but not both')
+            _where = complex_where
         self.order_by = order_by
         self.limit = limit
         self.where = _where
@@ -127,11 +127,12 @@ class QueryBody(QueryPart):
         if self.where is not None:
             where_str = self.where.parse_into(params)
             body.append(f'WHERE {where_str}')
+        if self.order_by is not None:
+            by = ', '.join(self.order_by)
+            body.append(f'ORDER BY {by}')
         if self.limit is not None:
             body.append('LIMIT ?')
             params.append(int(self.limit))
-        if self.order_by is not None:
-            body.append(', '.join(self.order_by))
         return ' '.join(body)
 
     def keys(self):
