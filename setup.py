@@ -1,19 +1,17 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 '''
 For submitting to PyPi: python3 sumbit.py
 '''
 
 setup(
     name='caph1993-pytools',
-    version='0.3.2',
+    version='0.3.3',
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',
     author_email='caph1993@gmail.com',
     license='MIT',
-    packages=[
-        'cp93pytools',
-    ],
+    packages=find_packages(),
     install_requires=[
         'typing-extensions',
     ],
