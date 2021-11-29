@@ -207,3 +207,95 @@ class QueryHeadUpdate(QueryHead):
 
     def keys(self):
         return [*self.record.keys()]
+
+
+'''
+Alternatives that I am considering for the future.
+'''
+
+# ---
+'''
+Number 3: BEST
+
+table.where().order_by().limit().dicts()
+table.where().order_by().limit().rows()
+table.where().delete()
+
+
+table.where(key=value1).order_by().limit().select()
+table.where_str('blah = ?', param1, param2).order_by().limit().select()
+'''
+
+# ---
+'''
+Number 1: (discarded)
+First the head then the body:
+
+table.count()
+table.count.where(...)() # awful
+
+table.dicts[columns].where(key1=value1,...).order_by(key1, 'key2 desc',...).limit(3)()
+table.rows[columns].where(key1=value1,...)
+table.dict[columns].where_str('this() = ? and that=?', [3, 4])
+table.update(key1=value1, ...).everywhere()
+'''
+
+# ---
+'''
+Number 2:
+With a global variable (or module) Q, accessible also with table.Q
+First the body, then the head (better):
+
+table.count[where(), order_by()]()
+table.value[where()], order_by()][limit[1](columns)
+table.dicts[where(), order_by(), Q.limit(1)](columns)
+
+Looks nice, but might be problematic for the type checker...
+
+Example:
+
+class Table:
+
+    @property
+    def dicts(self):
+        return SelectColumns(self, post=to_dict)[limit(1)]
+
+    @property
+    def value(self):
+        return SelectColumn(self, post=extractValue)[limit(1)]
+
+    @property
+    def delete(self):
+        return MutateNoColumn(self)[WhereRequired]
+
+
+class TableSelect:
+
+    def __init__(self, table, post):
+        self.table = table
+        self.post = post
+        self.where = None
+        self.order_by = None
+    
+    def __getitem__(self, *args):
+        for arg in args:
+            if isinstance(arg, )
+        check no overwrites
+        check no overwrites
+        self.where = ...
+        self.order_by = ...
+        return self
+
+
+class SelectColumns(TableSelect):
+    
+    def __call__(*columns:str):
+        data = ...
+        return self.post(data)
+
+class SelectColumn(TableSelect):
+    
+    def __call__(column:str):
+        data = ...
+        return self.post(data)
+'''
