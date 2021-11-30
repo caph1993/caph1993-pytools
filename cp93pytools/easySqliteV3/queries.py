@@ -60,7 +60,15 @@ class WhereEqual(RawWhere):
         super().__init__(query, *values)
 
 
-EverywhereError = 'To prevent an accident, you must specify .where(..) for delete/update queries. If you really want everywhere use .raw_where("1=1")'
+class Everywhere(Where):
+
+    def _str(self, params: Params):
+        return ''
+
+
+everywhere = Everywhere()  # Constant
+
+EverywhereError = 'To prevent an accident, you must specify .where(..) for delete/update queries. If you really want everywhere use .everywhere()'
 
 
 class QueryBody(_Str):
@@ -128,6 +136,11 @@ class Query:
     @query_method
     def raw_where(self, query: str, *params: Any):
         self.body._where = RawWhere(query, *params)
+        return self
+
+    @query_method
+    def everywhere(self, **key_values):
+        self.body._where = everywhere
         return self
 
     @query_method
