@@ -3,154 +3,70 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Any, Optional, Tuple, Ty
 from functools import wraps
 from random import shuffle
 import abc
-from .types import (
-    DataRow,
-    Params,
-    Data,
-    Record,
-)
-if TYPE_CHECKING:
-    from .table import SqliteTable
-
-
-class _Str(abc.ABC):
-
-    @abc.abstractmethod
-    def _str(self, params: Params) -> str:
-        ...
-
-
-class Where(_Str):
-    pass
-
-
-class RawWhere(Where):
-
-    def __init__(self, query: str, *params: Data):
-        self.query = query
-        self.params = params
-
-    def _str(self, params: Params):
-        params.extend(self.params)
-        return self.query
-
-
-class WhereAnd(Where):
-
-    def __init__(self, first: Where, second: Where):
-        self.first = first
-        self.second = second
-
-    def _str(self, params: Params):
-        first = self.first._str(params)
-        second = self.second._str(params)
-        return f'({first}) AND {second}'
-
-
-class WhereEqual(RawWhere):
-    '''
-    Particular case of Where:
-        key1 = value1 AND key2 = value2 AND ...
-    Implemented separately for speed because it is very common 
-    '''
-
-    def __init__(self, **kwargs: Data):
-        keys, values = unzip(kwargs)
-        query = ' AND '.join(f'{k} = ?' for k in keys)
-        super().__init__(query, *values)
-
-
-class Everywhere(Where):
-
-    def _str(self, params: Params):
-        return ''
-
-
-everywhere = Everywhere()  # Constant
-
-EverywhereError = 'To prevent an accident, you must specify .where(..) for delete/update queries. If you really want everywhere use .everywhere()'
-
-
-class QueryBody(_Str):
-
-    _where: Optional[Where] = None
-    _order_by: Tuple[str, ...] = ()
-    _limit: Optional[int] = None
-
-    def _str(self, params: List[Data]):
-        body = []
-        if self._where is not None:
-            where_str = self._where._str(params)
-            body.append(f'WHERE {where_str}')
-        if self._order_by:
-            by = ', '.join(self._order_by)
-            body.append(f'ORDER BY {by}')
-        if self._limit is not None:
-            body.append('LIMIT ?')
-            params.append(int(self._limit))
-        return ' '.join(body)
-
+from . import query_body as QB
+from .types import (DataRow, Params, Data, Record, unzip)
+from .database import SqliteDB
 
 F = TypeVar('F', bound=Callable)
 
 
 def query_method(wrapped: F) -> F:
     '''
-    Decorator for using Query methods from
-    classes that inherit from it
+    Decorator for using TableQuery methods
+    from classes that inherit from it
     '''
 
     @wraps(wrapped)
-    def wrapper(self, *args, **kwargs):
-        if not hasattr(self, 'body'):
-            self = Query(self, QueryBody())
+    def wrapper(self: TableQuery, *args, **kwargs):
+        if not hasattr(self, '_body'):
+            self = TableQuery.new(self)
         return wrapped(self, *args, **kwargs)
 
     return cast(F, wrapper)
 
 
-K = TypeVar('K')
-V = TypeVar('V')
+class TableQuery:
 
+    # Abstract attributes (defined by parents):
+    db: SqliteDB
+    name: str  # table name
 
-def unzip(record: Dict[K, V]) -> Tuple[List[K], List[V]]:
-    return map(list, zip(*record.items()))  # type:ignore
+    # Non-abstract:
+    _body: QB.QueryBody
 
-
-class Query:
-
-    body: QueryBody
-
-    def __init__(self, table: SqliteTable, body: QueryBody):
-        self.table_name = table.name
-        self.db = table.db
-        self.body = body
+    @classmethod
+    def new(cls, parent: TableQuery):
+        query = cls()
+        query._body = QB.QueryBody()
+        query.db = parent.db
+        query.name = parent.name
+        return query
 
     # "Where" related methods
 
     @query_method
     def where(self, **key_values):
-        self.body._where = WhereEqual(**key_values)
+        self._body._where = QB.WhereEqual(**key_values)
         return self
 
     @query_method
     def raw_where(self, query: str, *params: Any):
-        self.body._where = RawWhere(query, *params)
+        self._body._where = QB.RawWhere(query, *params)
         return self
 
     @query_method
     def everywhere(self, **key_values):
-        self.body._where = everywhere
+        self._body._where = QB.everywhere
         return self
 
     @query_method
     def order_by(self, *columns_asc_desc: str):
-        self.body._order_by = columns_asc_desc
+        self._body._order_by = columns_asc_desc
         return self
 
     @query_method
     def limit(self, limit: Optional[int]):
-        self.body._limit = limit
+        self._body._limit = limit
         return self
 
     # Select method and mutation methods
@@ -159,24 +75,24 @@ class Query:
     def select(self, *columns: str):
         what = ', '.join(columns) or '*'
         params = []
-        where = self.body._str(params)
-        query = (f'SELECT {what}' f' FROM {self.table_name} {where}')
+        where = self._body._str(params)
+        query = (f'SELECT {what}' f' FROM {self.name} {where}')
         return self.db._execute(query, params)
 
     @query_method
     def delete(self):
-        assert self.body._where is not None, EverywhereError
+        assert self._body._where is not None, QB.EverywhereError
         params = []
-        where = self.body._str(params)
-        query = f'DELETE FROM {self.table_name} {where}'
+        where = self._body._str(params)
+        query = f'DELETE FROM {self.name} {where}'
         return self.db._execute(query, params)
 
     @query_method
     def insert(self, **record: Data):
         #inst = 'INSERT OR IGNORE' if ignore else 'INSERT'
-        where = self.body._str([]).strip()
+        where = self._body._str([]).strip()
         assert not where, f'Unexpected statements for INSERT: {where}'
-        table = self.table_name
+        table = self.name
         keys, values = unzip(record)
         columns = ', '.join(keys)
         marks = ', '.join('?' for _ in keys)
@@ -185,9 +101,9 @@ class Query:
 
     @query_method
     def insert_or_ignore(self, **record: Data):
-        where = self.body._str([]).strip()
+        where = self._body._str([]).strip()
         assert not where, f'Unexpected statements for INSERT: {where}'
-        table = self.table_name
+        table = self.name
         keys, values = unzip(record)
         columns = ', '.join(keys)
         marks = ', '.join('?' for _ in keys)
@@ -197,25 +113,33 @@ class Query:
 
     @query_method
     def update_or_ignore(self, **partial_record: Data):
-        assert self.body._where is not None, EverywhereError
+        assert self._body._where is not None, QB.EverywhereError
         keys, params = unzip(partial_record)
         what = ', '.join(f'{c} = ?' for c in keys)
-        where = self.body._str(params)
-        query = f'UPDATE {self.table_name} SET {what} {where}'
+        where = self._body._str(params)
+        query = f'UPDATE {self.name} SET {what} {where}'
         cursor = self.db._execute(query, params)
         return cursor.rowcount
 
     @query_method
     def update(self, **partial_record: Data):
         if not self.update_or_ignore(**partial_record):
-            self.insert(**partial_record)
+            assert isinstance(
+                self._body._where, QB.WhereEqual
+            ), '.raw_where(..).update(..) is unsupported. Use .where(..).update(..) instead'
+            record = {
+                **partial_record,
+                **self._body._where.kwargs,
+            }
+            self._body._where = None
+            self.insert(**record)
         return
+
+    # high-level select methods
 
     @query_method
     def count(self):
         return int(self.value('count(*)'))
-
-    # high-level select methods
 
     @query_method
     def rows(self, *columns: str) -> List[DataRow]:
@@ -280,7 +204,7 @@ class Query:
         assert n > 0, 'Empty selection unsupported'
         N: int = self.count()
         assert N > 0, 'The table is empty'
-        where = self.body._where
+        where = self._body._where
         column_names = []
         rows: List[List[Data]] = []
         while len(rows) < n:
@@ -288,11 +212,11 @@ class Query:
             # Filter many out randomly
             mod = 1 + N // (2 * remaining)
             print(mod)
-            new_where = RawWhere(f'random() % ? = 0', mod)
+            new_where = QB.RawWhere(f'random() % ? = 0', mod)
             if where is not None:
-                new_where = WhereAnd(where, new_where)
-            self.body._order_by = ()
-            self.body._where = new_where
+                new_where = QB.WhereAnd(where, new_where)
+            self._body._order_by = ()
+            self._body._where = new_where
             cursor = self.limit(remaining).select(*columns)
             column_names = [x[0] for x in cursor.description]
             rows.extend(cursor)

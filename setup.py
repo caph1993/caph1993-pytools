@@ -1,11 +1,12 @@
 from setuptools import setup, find_packages
+from cp93pytools import VERSION
 '''
 For submitting to PyPi: python3 sumbit.py
 '''
 
 setup(
     name='caph1993-pytools',
-    version='0.4.1',
+    version=VERSION,
     description='Python toolbox of Carlos Pinzón',
     url='https://github.com/caph1993/caph1993-pytools',
     author='Carlos Pinzón',

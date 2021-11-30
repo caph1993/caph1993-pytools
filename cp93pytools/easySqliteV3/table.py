@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from random import shuffle
 from .database import SqliteDB, FilePath, custom_repr
-from .queries import Query, RawWhere, WhereAnd, query_method
+from .query import TableQuery
 from .types import (
     Data,
     Record,
@@ -10,7 +10,7 @@ from .types import (
 )
 
 
-class SqliteTable(Query):
+class SqliteTable(TableQuery):
     '''
     Sqlite table object.
 
