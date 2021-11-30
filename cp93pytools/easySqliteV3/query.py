@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Callable, Dict, List, Any, Optional, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Any, Optional, Tuple, TypeVar, cast
 from functools import wraps
 from random import shuffle
 import abc
@@ -222,3 +222,25 @@ class TableQuery:
             rows.extend(cursor)
         shuffle(rows)
         return rows, column_names
+
+    # high-level iter_select methods
+
+    @query_method
+    def iter_rows(self, *columns: str) -> Tuple[int, Iterable[DataRow]]:
+        total_approx = self.count()
+        it = iter(self.select(*columns))
+        return total_approx, it
+
+    @query_method
+    def iter_dicts(self, *columns: str) -> Tuple[int, Iterable[Record]]:
+        total_approx = self.count()
+        cursor = self.select(*columns)
+        names = [c for c, *_ in cursor.description]
+        it = (dict(zip(names, row)) for row in cursor)
+        return total_approx, it
+
+    @query_method
+    def iter_column(self, column: str) -> Tuple[int, Iterable[Data]]:
+        total_approx = self.count()
+        it = iter(row[0] for row in self.select(column))
+        return total_approx, it
