@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 #from sqlite3.dbapi2 import ProgrammingError
-from typing import List, Any, Tuple, Union
+from typing import List, Any, Tuple, Union, cast
 from pathlib import Path
 from .types import (
     Data,
@@ -52,12 +52,14 @@ class SqliteDB:
         return SqliteTable(self.file, table_name)
 
     def table_names(self) -> List[str]:
-        return self.execute_column("""
+        table_names = self.execute_column("""
             SELECT name FROM sqlite_master 
             WHERE type = 'table' 
             AND name NOT LIKE 'sqlite_%'
             ORDER BY 1;
         """)
+        table_names = cast(List[str], table_names)
+        return table_names
 
     def index_names(self):
         return self.execute_column("""

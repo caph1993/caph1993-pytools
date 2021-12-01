@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 from random import shuffle
 from .database import SqliteDB, FilePath, custom_repr
 from .query import TableQuery
@@ -42,7 +42,12 @@ class SqliteTable(TableQuery):
 
     def columns(self) -> List[str]:
         query_str = 'SELECT name FROM PRAGMA_TABLE_INFO(?)'
-        return self.db.execute_column(query_str, [self.name])
+        column_names = self.db.execute_column(
+            query_str,
+            [self.name],
+        )
+        column_names = cast(List[str], column_names)
+        return column_names
 
 
 def test():

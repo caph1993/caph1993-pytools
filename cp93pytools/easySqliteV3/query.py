@@ -139,7 +139,9 @@ class TableQuery:
 
     @query_method
     def count(self):
-        return int(self.value('count(*)'))
+        n = self.value('count(*)')
+        n = cast(int, n)
+        return n
 
     @query_method
     def rows(self, *columns: str) -> List[DataRow]:

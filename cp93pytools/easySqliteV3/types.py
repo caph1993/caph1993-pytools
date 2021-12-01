@@ -1,6 +1,6 @@
-from typing import Dict, List, Any, Tuple, TypeVar
+from typing import Dict, List, Tuple, TypeVar, Union
 
-Data = Any
+Data = Union[str, float, int, bool, None]
 Record = Dict[str, Data]
 Params = List[Data]
 DataRow = List[Data]
