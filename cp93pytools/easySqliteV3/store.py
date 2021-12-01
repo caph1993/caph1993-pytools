@@ -1,8 +1,17 @@
 from __future__ import annotations
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, TypedDict, cast
 from contextlib import contextmanager
 import json, time, random, logging
 from .table import Record, SqliteTable, FilePath, Data
+
+Serializable = Any
+
+
+class Record(TypedDict):
+    key: str
+    value: Optional[str]
+    lock_token: float
+    locked_until: float
 
 
 def create_deadline(timeout: Optional[float]):
@@ -37,6 +46,7 @@ class SqliteStore(SqliteTable):
 
     def __getitem__(self, key: str):
         d = super().where(key=key).get_dict('value')
+        d = cast(Optional[Record], d)
         if not d:
             raise KeyError(key)
         return json.loads(d['value'] or 'null')
@@ -48,13 +58,18 @@ class SqliteStore(SqliteTable):
             return default
 
     def values(self):
-        return [json.loads(s or 'null') for s in super().column('value')]
+        col = super().column('value')
+        col = cast(List[Optional[str]], col)
+        return [json.loads(s or 'null') for s in col]
 
     def keys(self) -> List[str]:
-        return [k for k in super().column('key')]
+        col = super().column('value')
+        col = cast(List[str], col)
+        return [k for k in col]
 
     def items(self) -> List[Tuple[str, Data]]:
         items = super().rows('key', 'value')
+        items = cast(List[Tuple[str, Optional[str]]], items)
         return [(k, json.loads(v or 'null')) for k, v in items]
 
     def __set_assuming_token(self, key: str, value: Data):
@@ -64,9 +79,11 @@ class SqliteStore(SqliteTable):
         return SqliteTable.delete(self.where(key=key))
 
     def _current_lock(self, key: str):
-        return super().where(key=key).get_dict('lock_token', 'locked_until')
+        d = super().where(key=key).get_dict('lock_token', 'locked_until')
+        d = cast(Optional[Record], d)
+        return d
 
-    def set(self, key: str, value: Data, token: float):
+    def set(self, key: str, value: Serializable, token: float):
         '''
         Requires a token provided by the exclusive access context
         manager self.wait_token() or self.ask_token().
@@ -222,6 +239,7 @@ class SqliteStore(SqliteTable):
 
 
 def test():
+    from typing import cast
     store = SqliteStore('.test.db', 'the_table')
     print(store.db.table_names())
     print(len(store))
@@ -236,6 +254,7 @@ def test():
     store.wait_set('adri', 'BYE')
     store.wait_set('santiago', 'HMM')
     key = store.random_rows(1, 'key')[0][0]
+    key = cast(str, key)
     print(f'Deleting key={key}')
     store.delete(key, token)
     print('OK')
