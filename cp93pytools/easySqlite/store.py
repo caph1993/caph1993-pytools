@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Generic, List, Optional, Tuple, Type, TypeVar, TypedDict, cast
+from typing import Any, Generic, List, Optional, Tuple, Type, TypeVar, TypedDict, cast, overload
 from contextlib import contextmanager
 import json, time, random, logging
 from .table import SqliteTable, FilePath
@@ -27,6 +27,7 @@ class TokenError(Exception):
 
 
 V = TypeVar('V')
+VV = TypeVar('VV')
 
 
 class SqliteStore(Generic[V], SqliteTable):
@@ -60,7 +61,15 @@ class SqliteStore(Generic[V], SqliteTable):
         value = json.loads(d['value'])
         return cast(V, value)
 
-    def get(self, key: str, default: Optional[V] = None):
+    @overload
+    def get(self, key: str, default: None) -> Optional[V]:
+        ...
+
+    @overload
+    def get(self, key: str, default: VV) -> VV:
+        ...
+
+    def get(self, key: str, default=None):
         try:
             return self[key]
         except KeyError:
