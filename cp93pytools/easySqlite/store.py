@@ -66,6 +66,10 @@ class SqliteStore(Generic[V], SqliteTable):
         ...
 
     @overload
+    def get(self, key: str) -> Optional[V]:
+        ...
+
+    @overload
     def get(self, key: str, default: VV) -> VV:
         ...
 

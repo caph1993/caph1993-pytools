@@ -1,3 +1,4 @@
+from typing import List, TypedDict
 from cp93pytools.audio import Sequence
 from cp93pytools.methodtools import cached_property
 #from cp93pytools.process import MyProcess, test
@@ -11,8 +12,13 @@ from cp93pytools.easySqlite import SqliteTable, SqliteStore
 # x
 
 
+class MyDict(TypedDict):
+    name: str
+    age: int
+
+
 def test_store():
-    store = SqliteStore('.test.db', 'the_table')
+    store = SqliteStore[str]('.test.db', 'the_table')
     print(store.db.table_names())
     print(len(store))
     store.wait_set('carlos', 'HELLO')
