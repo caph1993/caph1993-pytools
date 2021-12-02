@@ -3,11 +3,6 @@ from typing import Dict, List, Optional, cast
 from random import shuffle
 from .database import SqliteDB, FilePath, custom_repr
 from .query import TableQuery
-from .types import (
-    Data,
-    Record,
-    DataRow,
-)
 
 
 class SqliteTable(TableQuery):

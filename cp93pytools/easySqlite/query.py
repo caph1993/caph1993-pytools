@@ -1,10 +1,9 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Any, Optional, Tuple, TypeVar, cast
+from typing import Callable, Dict, Iterator, List, Any, Optional, Type, TypeVar, cast
 from functools import wraps
 from random import shuffle
-import abc
 from . import query_body as QB
-from .types import (DataRow, Params, Data, Record, unzip)
+from .types import (DataRow, Data, Record, unzip)
 from .database import SqliteDB
 
 F = TypeVar('F', bound=Callable)
@@ -13,7 +12,9 @@ F = TypeVar('F', bound=Callable)
 def query_method(wrapped: F) -> F:
     '''
     Decorator for using TableQuery methods
-    from classes that inherit from it
+    from classes that inherit from it.
+    When called from a parent, self is converted
+    into a new TableQuery with a new empty _body.
     '''
 
     @wraps(wrapped)
@@ -50,13 +51,8 @@ class TableQuery:
         return self
 
     @query_method
-    def raw_where(self, query: str, *params: Any):
-        self._body._where = QB.RawWhere(query, *params)
-        return self
-
-    @query_method
-    def everywhere(self, **key_values):
-        self._body._where = QB.everywhere
+    def where_sql(self, query: str, *params: Any):
+        self._body._where = QB.WhereSql(query, *params)
         return self
 
     @query_method
@@ -69,6 +65,27 @@ class TableQuery:
         self._body._limit = limit
         return self
 
+    @query_method
+    def everywhere(self):
+        self._body._where = QB.Everywhere()
+        return self
+
+    @query_method
+    def and_where(self, **key_values):
+        self._body._where = QB.WhereAnd(
+            self._body._where,
+            QB.WhereEqual(**key_values),
+        )
+        return self
+
+    @query_method
+    def and_where_sql(self, query: str, *params: Any):
+        self._body._where = QB.WhereAnd(
+            self._body._where,
+            QB.WhereSql(query, *params),
+        )
+        return self
+
     # Select method and mutation methods
 
     @query_method
@@ -76,12 +93,12 @@ class TableQuery:
         what = ', '.join(columns) or '*'
         params = []
         where = self._body._str(params)
-        query = (f'SELECT {what}' f' FROM {self.name} {where}')
+        query = f'SELECT {what} FROM {self.name} {where}'
         return self.db._execute(query, params)
 
     @query_method
     def delete(self):
-        assert self._body._where is not None, QB.EverywhereError
+        QB.Where.assert_initialized(self._body._where)
         params = []
         where = self._body._str(params)
         query = f'DELETE FROM {self.name} {where}'
@@ -113,7 +130,7 @@ class TableQuery:
 
     @query_method
     def update_or_ignore(self, **partial_record: Data):
-        assert self._body._where is not None, QB.EverywhereError
+        QB.Where.assert_initialized(self._body._where)
         keys, params = unzip(partial_record)
         what = ', '.join(f'{c} = ?' for c in keys)
         where = self._body._str(params)
@@ -126,7 +143,7 @@ class TableQuery:
         if not self.update_or_ignore(**partial_record):
             assert isinstance(
                 self._body._where, QB.WhereEqual
-            ), '.raw_where(..).update(..) is unsupported. Use .where(..).update(..) instead'
+            ), '.where_sql(..).update(..) is unsupported. Use .where(..).update(..) instead'
             record = {
                 **partial_record,
                 **self._body._where.kwargs,
@@ -140,66 +157,87 @@ class TableQuery:
     @query_method
     def count(self):
         n = self.value('count(*)')
-        n = cast(int, n)
-        return n
+        return cast(int, n)
+
+    # High-level methods with type argument
 
     @query_method
-    def rows(self, *columns: str) -> List[DataRow]:
-        return [*self.select(*columns)]
+    def rows(self, *columns: str, type: Type = DataRow):
+        rows = [*self.select(*columns)]
+        return cast(List[type], rows)
 
     @query_method
-    def dicts(self, *columns: str) -> List[Record]:
+    def dicts(self, *columns: str, type: Type = Record):
         cursor = self.select(*columns)
         names = [c for c, *_ in cursor.description]
-        return [dict(zip(names, row)) for row in cursor]
+        dicts = [dict(zip(names, row)) for row in cursor]
+        return cast(List[type], dicts)
 
     @query_method
-    def column(self, column: str) -> List[Data]:
-        return [first for first, *_ in self.rows(column)]
+    def column(self, column: str, type: Type = Data):
+        values = [first for first, *_ in self.rows(column)]
+        return cast(List[type], values)
 
     @query_method
-    def value(self, column: str) -> Data:
-        return self.limit(1).column(column)[0]
+    def value(self, column: str, type: Type = Data):
+        value = self.limit(1).column(column)[0]
+        return cast(type, value)
 
     @query_method
-    def dict(self, *columns: str) -> Record:
-        return self.limit(1).dicts(*columns)[0]
+    def dict(self, *columns: str, type: Type = Record):
+        dict = self.limit(1).dicts(*columns)[0]
+        return cast(type, dict)
 
     @query_method
-    def get_value(self, column: str) -> Optional[Data]:
-        col = self.limit(1).column(column)
-        return col[0] if col else None
+    def get_value(self, column: str, type: Type = Data):
+        col = self.limit(1).column(column, type=type)
+        value = col[0] if col else None
+        return cast(Optional[type], value)
 
     @query_method
-    def get_dict(self, *columns: str) -> Optional[Record]:
-        dicts = self.limit(1).dicts(*columns)
-        return dicts[0] if dicts else None
+    def get_dict(self, *columns: str, type: Type = Record):
+        dicts = self.limit(1).dicts(*columns, type=type)
+        record = dicts[0] if dicts else None
+        return cast(Optional[type], record)
 
     @query_method
-    def series(self, *columns: str) -> Dict[str, List[Data]]:
+    def series(self, *columns: str, type: Type = Data):
         cursor = self.select(*columns)
         keys = [x[0] for x in cursor.description]
         out = {key: [] for key in keys}
         for row in cursor:
             for key, value in zip(keys, row):
                 out[key].append(value)
-        return out
+        return cast(Dict[str, List[type]], out)
 
     # random selection methods
 
     @query_method
-    def random_rows(self, n: int, *columns: str):
+    def random_rows(self, n: int, *columns: str, type: Type = DataRow):
         rows, _ = self._select_random(n, *columns)
-        return rows
+        return cast(List[type], rows)
 
     @query_method
-    def random_dicts(self, n: int, *columns: str) -> List[Record]:
+    def random_dicts(self, n: int, *columns: str, type: Type = Record):
         rows, keys = self._select_random(n, *columns)
-        return [dict(zip(keys, row)) for row in rows]
+        dicts = [dict(zip(keys, row)) for row in rows]
+        return cast(List[type], dicts)
 
     @query_method
-    def random_dict(self, *columns: str):
-        return self.random_dicts(1, *columns)[0]
+    def random_values(self, n: int, column: str, type: Type = Data):
+        rows = self.random_rows(n, column)
+        values = [first for first, *_ in rows]
+        return cast(List[type], values)
+
+    @query_method
+    def random_dict(self, *columns: str, type: Type = Record):
+        dicts = self.random_dicts(1, *columns, type=type)
+        return cast(type, dicts[0])
+
+    @query_method
+    def random_value(self, column: str, type: Type = Data):
+        values = self.random_values(1, column, type=type)
+        return cast(type, values[0])
 
     @query_method
     def _select_random(self, n: int, *columns: str):
@@ -214,7 +252,7 @@ class TableQuery:
             # Filter many out randomly
             mod = 1 + N // (2 * remaining)
             print(mod)
-            new_where = QB.RawWhere(f'random() % ? = 0', mod)
+            new_where = QB.WhereSql(f'random() % ? = 0', mod)
             if where is not None:
                 new_where = QB.WhereAnd(where, new_where)
             self._body._order_by = ()
@@ -228,21 +266,24 @@ class TableQuery:
     # high-level iter_select methods
 
     @query_method
-    def iter_rows(self, *columns: str) -> Tuple[int, Iterable[DataRow]]:
+    def iter_rows(self, *columns: str, type: Type = DataRow):
         total_approx = self.count()
         it = iter(self.select(*columns))
+        it = cast(Iterator[type], it)
         return total_approx, it
 
     @query_method
-    def iter_dicts(self, *columns: str) -> Tuple[int, Iterable[Record]]:
+    def iter_dicts(self, *columns: str, type: Type = Record):
         total_approx = self.count()
         cursor = self.select(*columns)
         names = [c for c, *_ in cursor.description]
         it = (dict(zip(names, row)) for row in cursor)
+        it = cast(Iterator[type], it)
         return total_approx, it
 
     @query_method
-    def iter_column(self, column: str) -> Tuple[int, Iterable[Data]]:
+    def iter_column(self, column: str, type: Type = Data):
         total_approx = self.count()
         it = iter(row[0] for row in self.select(column))
+        it = cast(Iterator[type], it)
         return total_approx, it

@@ -1,10 +1,8 @@
 from __future__ import annotations
-from typing import Any, List, Optional, Tuple, TypedDict, cast
+from typing import Any, Generic, List, Optional, Tuple, Type, TypeVar, TypedDict, cast
 from contextlib import contextmanager
 import json, time, random, logging
-from .table import Record, SqliteTable, FilePath, Data
-
-Serializable = Any
+from .table import SqliteTable, FilePath
 
 
 class Record(TypedDict):
@@ -28,10 +26,13 @@ class TokenError(Exception):
     message = 'Invalid or expired token'
 
 
-class SqliteStore(SqliteTable):
+V = TypeVar('V')
+
+
+class SqliteStore(Generic[V], SqliteTable):
 
     def __init__(self, file: FilePath, name: str):
-        super().__init__(file, name)
+        self.table.__init__(file, name)
         self.db.execute(f'''
         CREATE TABLE IF NOT EXISTS {self.name}(
             key text NOT NULL PRIMARY KEY,
@@ -44,46 +45,62 @@ class SqliteStore(SqliteTable):
         assert set(self.columns()) == the_columns, self.columns()
         return
 
-    def __getitem__(self, key: str):
-        d = super().where(key=key).get_dict('value')
-        d = cast(Optional[Record], d)
-        if not d:
-            raise KeyError(key)
-        return json.loads(d['value'] or 'null')
+    @property
+    def table(self):
+        return cast(SqliteTable, super())
 
-    def get(self, key: str, default=None):
+    def __getitem__(self, key: str):
+        d = self.table.where(key=key).get_dict(
+            'value',
+            type=Record,
+        )
+        d = cast(Optional[Record], d)
+        if not d or not d['value']:
+            raise KeyError(key)
+        value = json.loads(d['value'])
+        return cast(V, value)
+
+    def get(self, key: str, default: Optional[V] = None):
         try:
             return self[key]
         except KeyError:
             return default
 
     def values(self):
-        col = super().column('value')
-        col = cast(List[Optional[str]], col)
-        return [json.loads(s or 'null') for s in col]
+        col = self.table.where_sql(
+            'value<>?',
+            None,
+        ).column('value', type=str)
+        values = [json.loads(s) for s in col]
+        return cast(List[V], values)
 
-    def keys(self) -> List[str]:
-        col = super().column('value')
-        col = cast(List[str], col)
-        return [k for k in col]
+    def keys(self):
+        return self.table.column('value', type=str)
 
-    def items(self) -> List[Tuple[str, Data]]:
-        items = super().rows('key', 'value')
-        items = cast(List[Tuple[str, Optional[str]]], items)
-        return [(k, json.loads(v or 'null')) for k, v in items]
+    def items(self):
+        encoded = self.table.rows(
+            'key',
+            'value',
+            type=Tuple[str, Optional[str]],
+        )
+        items = [(k, json.loads(v or 'null')) for k, v in encoded]
+        items = cast(List[Tuple[str, V]], items)
+        return items
 
-    def __set_assuming_token(self, key: str, value: Data):
-        return super().where(key=key).update(value=json.dumps(value))
+    def __set_assuming_token(self, key: str, value: V):
+        return self.table.where(key=key).update(value=json.dumps(value))
 
     def __del_assuming_token(self, key: str):
-        return SqliteTable.delete(self.where(key=key))
+        return self.table.where(key=key).delete()
 
     def _current_lock(self, key: str):
-        d = super().where(key=key).get_dict('lock_token', 'locked_until')
-        d = cast(Optional[Record], d)
-        return d
+        return self.table.where(key=key).get_dict(
+            'lock_token',
+            'locked_until',
+            type=Record,
+        )
 
-    def set(self, key: str, value: Serializable, token: float):
+    def set(self, key: str, value: V, token: float):
         '''
         Requires a token provided by the exclusive access context
         manager self.wait_token() or self.ask_token().
@@ -108,7 +125,7 @@ class SqliteStore(SqliteTable):
             self.__del_assuming_token(key)
         return False
 
-    def ask_set(self, key: str, value: Data):
+    def ask_set(self, key: str, value: V):
         with self.ask_token(key) as token:
             if not token:
                 return False
@@ -117,20 +134,35 @@ class SqliteStore(SqliteTable):
 
     def wait_del(self, key: str, request_every: float = 0.02,
                  timeout: Optional[float] = 3):
-        wait = self.wait_token(key, request_every=request_every,
-                               timeout=timeout)
+        wait = self.wait_token(
+            key,
+            request_every=request_every,
+            timeout=timeout,
+        )
         with wait:
             self.__del_assuming_token(key)
 
-    def wait_set(self, key: str, value: Data, request_every: float = 0.02,
-                 timeout: Optional[float] = 3):
-        wait = self.wait_token(key, request_every=request_every,
-                               timeout=timeout)
+    def wait_set(
+        self,
+        key: str,
+        value: V,
+        request_every: float = 0.02,
+        timeout: Optional[float] = 3,
+    ):
+        wait = self.wait_token(
+            key,
+            request_every=request_every,
+            timeout=timeout,
+        )
         with wait as token:
             self.set(key, value, token)
 
     @contextmanager
-    def ask_token(self, *keys: str, max_duration: float = 0.5):
+    def ask_token(
+        self,
+        *keys: str,
+        max_duration: float = 0.5,
+    ):
         '''
         with table.ask_token('some_key') as token:
             if not token:
@@ -158,8 +190,11 @@ class SqliteStore(SqliteTable):
         max_duration = 0.5
         try:
             for key in keys:
-                if not self._ask_access(key, token=token,
-                                        max_duration=max_duration):
+                if not self._ask_access(
+                        key,
+                        token=token,
+                        max_duration=max_duration,
+                ):
                     raise TokenError(key, token)
             yield
         finally:
@@ -168,9 +203,13 @@ class SqliteStore(SqliteTable):
         return
 
     @contextmanager
-    def wait_token(self, *keys: str, max_duration: float = 0.5,
-                   request_every: float = 0.02, timeout: Optional[float] = 3,
-                   _warn_del=True):
+    def wait_token(
+        self,
+        *keys: str,
+        max_duration: float = 0.5,
+        request_every: float = 0.02,
+        timeout: Optional[float] = 3,
+    ):
         '''
         # Wait at most {timeout} seconds to get exclusive access,
         # requesting every {request_every} seconds
@@ -201,19 +240,19 @@ class SqliteStore(SqliteTable):
         now = time.time()
         until = now + max_duration
         # Compete with other processes for an exclusive update
-        cursor = self.db._execute(
-            f'''
-        UPDATE {self.name} SET
-            lock_token=?,
-            locked_until=?
-        WHERE
-            key=? AND (
-                lock_token<0 OR
-                lock_token=? OR
-                locked_until<?
-            )
-        ''', [token, until, key, token, now])
-        if cursor.rowcount > 0:  # Race winner
+        did = self.table.where(key=key).and_where_sql(
+            """
+            lock_token<0 OR
+            lock_token=? OR
+            locked_until<?
+            """,
+            token,
+            now,
+        ).update_or_ignore(
+            lock_token=token,
+            locked_until=until,
+        )
+        if did:  # Race winner
             return True
         # Maybe the key was not even present:
         return self.insert_or_ignore(
@@ -234,27 +273,5 @@ class SqliteStore(SqliteTable):
                 f'Locked {repr(key)} during {ms}ms more than max_duration={max_duration}s'
             )
         if d['lock_token'] == token:
-            super().where(key=key).update(lock_token=-1)
+            self.table.where(key=key).update(lock_token=-1)
         return
-
-
-def test():
-    from typing import cast
-    store = SqliteStore('.test.db', 'the_table')
-    print(store.db.table_names())
-    print(len(store))
-    store.wait_set('carlos', 'HELLO')
-    print(store.dicts())
-    with store.wait_token('carlos', 'adri') as token:
-        print(f'I HAVE ACCESS! {token}')
-        with store.ask_token('carlos') as access:
-            assert access is None
-
-    store.wait_set('carlos', 'HELLO2')
-    store.wait_set('adri', 'BYE')
-    store.wait_set('santiago', 'HMM')
-    key = store.random_rows(1, 'key')[0][0]
-    key = cast(str, key)
-    print(f'Deleting key={key}')
-    store.delete(key, token)
-    print('OK')
