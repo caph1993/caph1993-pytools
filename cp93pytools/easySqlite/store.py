@@ -5,7 +5,7 @@ import json, time, random, logging
 from .table import SqliteTable, FilePath
 
 
-class Record(TypedDict):
+class StoreRecord(TypedDict):
     key: str
     value: Optional[str]
     lock_token: float
@@ -26,11 +26,11 @@ class TokenError(Exception):
     message = 'Invalid or expired token'
 
 
-V = TypeVar('V')
-VV = TypeVar('VV')
+Value = TypeVar('Value')
+Data = TypeVar('Data')
 
 
-class SqliteStore(Generic[V], SqliteTable):
+class SqliteStore(Generic[Value], SqliteTable):
 
     def __init__(self, file: FilePath, name: str):
         self.table.__init__(file, name)
@@ -53,31 +53,35 @@ class SqliteStore(Generic[V], SqliteTable):
     def __getitem__(self, key: str):
         d = self.table.where(key=key).get_dict(
             'value',
-            type=Record,
+            type=StoreRecord,
         )
-        d = cast(Optional[Record], d)
+        d = cast(Optional[StoreRecord], d)
         if not d or not d['value']:
             raise KeyError(key)
         value = json.loads(d['value'])
-        return cast(V, value)
+        return cast(Value, value)
 
     @overload
-    def get(self, key: str, default: None) -> Optional[V]:
+    def get(self, key: str) -> Optional[Value]:
         ...
 
     @overload
-    def get(self, key: str) -> Optional[V]:
-        ...
-
-    @overload
-    def get(self, key: str, default: VV) -> VV:
+    def get(self, key: str, default: None) -> Optional[Value]:
         ...
 
     def get(self, key: str, default=None):
         try:
-            return self[key]
+            value = self[key]
         except KeyError:
-            return default
+            value = default
+        return value
+
+    def getT(self, key: str, default=None, type: Type = Any):
+        try:
+            value = self[key]
+        except KeyError:
+            value = default
+        return cast(type, value)
 
     def values(self):
         col = self.table.where_sql(
@@ -85,7 +89,7 @@ class SqliteStore(Generic[V], SqliteTable):
             None,
         ).column('value', type=str)
         values = [json.loads(s) for s in col]
-        return cast(List[V], values)
+        return cast(List[Value], values)
 
     def keys(self):
         return self.table.column('value', type=str)
@@ -97,10 +101,10 @@ class SqliteStore(Generic[V], SqliteTable):
             type=Tuple[str, Optional[str]],
         )
         items = [(k, json.loads(v or 'null')) for k, v in encoded]
-        items = cast(List[Tuple[str, V]], items)
+        items = cast(List[Tuple[str, Value]], items)
         return items
 
-    def __set_assuming_token(self, key: str, value: V):
+    def __set_assuming_token(self, key: str, value: Value):
         return self.table.where(key=key).update(value=json.dumps(value))
 
     def __del_assuming_token(self, key: str):
@@ -110,10 +114,10 @@ class SqliteStore(Generic[V], SqliteTable):
         return self.table.where(key=key).get_dict(
             'lock_token',
             'locked_until',
-            type=Record,
+            type=StoreRecord,
         )
 
-    def set(self, key: str, value: V, token: float):
+    def set(self, key: str, value: Value, token: float):
         '''
         Requires a token provided by the exclusive access context
         manager self.wait_token() or self.ask_token().
@@ -138,7 +142,7 @@ class SqliteStore(Generic[V], SqliteTable):
             self.__del_assuming_token(key)
         return False
 
-    def ask_set(self, key: str, value: V):
+    def ask_set(self, key: str, value: Value):
         with self.ask_token(key) as token:
             if not token:
                 return False
@@ -158,7 +162,7 @@ class SqliteStore(Generic[V], SqliteTable):
     def wait_set(
         self,
         key: str,
-        value: V,
+        value: Value,
         request_every: float = 0.02,
         timeout: Optional[float] = 3,
     ):

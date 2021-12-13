@@ -35,6 +35,7 @@ def test_store():
     print(f'Deleting key={key}')
     store.delete(key, token)
     print('OK')
+    #x = store.getT('asd', type=MyDict)
 
 
 test_store()
