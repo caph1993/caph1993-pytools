@@ -1,5 +1,7 @@
 from __future__ import annotations
-from typing import Any, Generic, List, Optional, Tuple, Type, TypeVar, TypedDict, cast, overload
+from typing import Any, Generic, List, Optional, Tuple, TypeVar, cast
+from typing_extensions import Type, TypedDict, overload
+
 from contextlib import contextmanager
 import json, time, random, logging
 from .table import SqliteTable, FilePath
