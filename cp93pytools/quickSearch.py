@@ -63,8 +63,8 @@ class quickFilter(List[str]):
         n = len(pattern)
         out = defaultdict(lambda: 0)
         for i in range(n):
-            isStart = (i == 0) or (pattern[i - 1] in (' ', '-', '_'))
-            for j in range(i + 1, min(i + 3, n)):
+            isStart = (i == 0) or (pattern[i - 1] in (' ', '-', '_', ':'))
+            for j in range(i + 1, 1 + min(i + 3, n)):
                 sub = pattern[i:j]
                 score = 1 + isStart
                 out[sub] += score
@@ -98,7 +98,7 @@ class quickFilter(List[str]):
         tgt = self._each[idx]
         return self._cmp(src, tgt)
 
-    def wcmp_vs_one(self, pattern: str, idx: int) -> int:
+    def wcmp_vs_one(self, pattern: str, idx: int) -> float:
         src = self._get_grams(pattern)
         tgt = self._each[idx]
         AB = self._cmp(src, tgt)
@@ -120,7 +120,7 @@ class quickFilter(List[str]):
 
     def wcmp_vs_all(self, pattern: str) -> List[Tuple[int, float]]:
         src = self._get_grams(self._parser(pattern))
-        score: T_scorer = defaultdict(lambda: 0)
+        score: DefaultDict[int, float] = defaultdict(lambda: 0)
         for sub, a in src.items():
             for i, b in self._ngrams[sub]:
                 score[i] += a * b
@@ -134,5 +134,5 @@ class quickFilter(List[str]):
     def rank(self, pattern: str) -> List[Tuple[str, float]]:
         ranking = [(self[i], score) for i, score in self.wcmp_vs_all(pattern)]
         if len(ranking) == 0:
-            ranking = [('', 0)]
+            ranking: List[Tuple[str, float]] = [('', 0)]
         return ranking
