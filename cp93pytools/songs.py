@@ -217,16 +217,3 @@ def del_all_pictures(id3s):
         id3.delall('APIC')
         id3.save()
     return
-
-
-xdir = '/home/carlos/Mega/Redmi 8/songs/Instrumental A/'
-id3s = [MyID3(f'{xdir}/{xfile}') for xfile in sorted(os.listdir(xdir))]
-
-for id3 in print_enum(id3s):
-    print(id3)
-    try:
-        auto_lyrics(genius, id3)
-        auto_picture(id3)
-    except Exception as e:
-        print(e)
-    print(id3)
