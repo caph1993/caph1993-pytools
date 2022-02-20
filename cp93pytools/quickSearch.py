@@ -24,6 +24,7 @@ class quickFilter(List[str]):
     _ngrams: T_ngrams
     _max_score: List[int]
     _each: List[NGrams]
+    K = 5
 
     def __init__(self, elems: Sequence[str], ignore_accents=True,
                  ignore_case=True):
@@ -56,7 +57,7 @@ class quickFilter(List[str]):
     @classmethod
     def _get_grams(cls, pattern: str) -> DefaultDict[str, int]:
         '''
-        Compute all 1,2,3-grams of pattern and their score, possibly repeating.
+        Compute all 1,2,..,K-grams of pattern and their score, possibly repeating.
         The output size is bounded by 3*len(pattern)
         Additional score is given if the gram comes after space, dash or underscore.
         '''
@@ -64,9 +65,9 @@ class quickFilter(List[str]):
         out = defaultdict(lambda: 0)
         for i in range(n):
             isStart = (i == 0) or (pattern[i - 1] in (' ', '-', '_', ':'))
-            for j in range(i + 1, 1 + min(i + 3, n)):
+            for j in range(i + 1, 1 + min(i + cls.K, n)):
                 sub = pattern[i:j]
-                score = 1 + isStart
+                score = isStart + len(sub)
                 out[sub] += score
         return out
 
